@@ -6,5 +6,25 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "replique-client"
+path = "src/main.rs"
+
 [dependencies]
 replique-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+url.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+ureq = { version = "3", features = ["json"] }
+uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+getrandom = "0.3"
+base64 = "0.22"
+signal-hook = "0.3"
+
+[dev-dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "macros"] }
+tempfile = "3"
