@@ -207,11 +207,95 @@ impl Default for AlertsConfig {
     }
 }
 
+/// Environment variables that override the file: (variable, section, key,
+/// whether the value is a number). Secrets stay in files or on the Settings
+/// page; only `REPLIQUE_ADMIN_PASSWORD_HASH` (a hash, not a password) is read
+/// from the environment, by `App::new`.
+pub const ENV_OVERRIDES: &[(&str, Option<&str>, &str, bool)] = &[
+    ("REPLIQUE_LISTEN", None, "listen", false),
+    ("REPLIQUE_PUBLIC_URL", None, "public_url", false),
+    ("REPLIQUE_STATE_DIR", None, "state_dir", false),
+    ("REPLIQUE_OWNER_NAME", None, "owner_name", false),
+    (
+        "REPLIQUE_ADMIN_PASSWORD_HASH_FILE",
+        None,
+        "admin_password_hash_file",
+        false,
+    ),
+    ("REPLIQUE_STORAGE_BOX_ID", Some("storage_box"), "id", true),
+    (
+        "REPLIQUE_STORAGE_BOX_HOST",
+        Some("storage_box"),
+        "host",
+        false,
+    ),
+    (
+        "REPLIQUE_HETZNER_TOKEN_FILE",
+        Some("storage_box"),
+        "hetzner_token_file",
+        false,
+    ),
+    (
+        "REPLIQUE_MEASURE_VIA",
+        Some("storage_box"),
+        "measure_via",
+        false,
+    ),
+    (
+        "REPLIQUE_KEY_INSTALL",
+        Some("storage_box"),
+        "key_install",
+        false,
+    ),
+];
+
 impl Config {
+    /// Reads the file, then applies `REPLIQUE_*` environment variables on top
+    /// (see `ENV_OVERRIDES`). A missing file is fine when the environment says
+    /// enough: a container platform such as façade configures apps that way.
     pub fn load(path: &Path) -> anyhow::Result<Config> {
-        let raw =
-            std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
-        Config::parse(&raw).with_context(|| format!("in {}", path.display()))
+        Config::load_with(path, |k| std::env::var(k).ok())
+    }
+
+    pub fn load_with(path: &Path, env: impl Fn(&str) -> Option<String>) -> anyhow::Result<Config> {
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::warn!(
+                    "{} not found: using defaults and REPLIQUE_* variables",
+                    path.display()
+                );
+                String::new()
+            }
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
+        let mut table: toml::Table =
+            toml::from_str(&raw).with_context(|| format!("in {}", path.display()))?;
+        for (var, section, key, integer) in ENV_OVERRIDES {
+            let Some(value) = env(var).filter(|v| !v.trim().is_empty()) else {
+                continue;
+            };
+            let value = if *integer {
+                toml::Value::Integer(
+                    value
+                        .trim()
+                        .parse()
+                        .with_context(|| format!("{var} must be a number"))?,
+                )
+            } else {
+                toml::Value::String(value.trim().to_string())
+            };
+            let target = match section {
+                Some(section) => table
+                    .entry(section.to_string())
+                    .or_insert_with(|| toml::Value::Table(Default::default()))
+                    .as_table_mut()
+                    .with_context(|| format!("[{section}] is not a table"))?,
+                None => &mut table,
+            };
+            target.insert(key.to_string(), value);
+        }
+        Config::parse(&toml::to_string(&table)?).with_context(|| format!("in {}", path.display()))
     }
 
     pub fn parse(raw: &str) -> anyhow::Result<Config> {
@@ -286,5 +370,28 @@ mod tests {
         assert_eq!(c.storage_box.measure_via, MeasureVia::Main);
         assert_eq!(c.storage_box.key_install, KeyInstall::Sftp);
         assert!(Config::parse("bogus = 1").is_err());
+    }
+
+    #[test]
+    fn environment_overrides_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("replique.toml");
+        std::fs::write(&file, "owner_name = \"Sigma\"\n[storage_box]\nport = 23\n").unwrap();
+        let env = |k: &str| match k {
+            "REPLIQUE_LISTEN" => Some("0.0.0.0:8080".to_string()),
+            "REPLIQUE_STORAGE_BOX_ID" => Some("718677".to_string()),
+            "REPLIQUE_KEY_INSTALL" => Some("manual".to_string()),
+            _ => None,
+        };
+        let c = Config::load_with(&file, env).unwrap();
+        assert_eq!(c.owner_name, "Sigma");
+        assert_eq!(c.listen.to_string(), "0.0.0.0:8080");
+        assert_eq!(c.storage_box.id, Some(718677));
+        assert_eq!(c.storage_box.key_install, KeyInstall::Manual);
+        // No file at all: defaults and the environment.
+        let c = Config::load_with(&dir.path().join("missing.toml"), env).unwrap();
+        assert_eq!(c.storage_box.id, Some(718677));
+        let bad = |k: &str| (k == "REPLIQUE_STORAGE_BOX_ID").then(|| "x".to_string());
+        assert!(Config::load_with(&file, bad).is_err());
     }
 }

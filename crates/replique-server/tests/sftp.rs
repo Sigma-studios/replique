@@ -22,11 +22,16 @@ use replique_server::storage::Access;
 fn target() -> Option<(String, u16, Secret)> {
     let addr = std::env::var("REPLIQUE_TEST_SFTP").ok()?;
     let (host, port) = addr.rsplit_once(':')?;
-    let password = std::env::var("REPLIQUE_TEST_SFTP_PASSWORD").unwrap_or_else(|_| "DevPass-1234".into());
+    let password =
+        std::env::var("REPLIQUE_TEST_SFTP_PASSWORD").unwrap_or_else(|_| "DevPass-1234".into());
     Some((host.to_string(), port.parse().ok()?, Secret::new(password)))
 }
 
-fn restic_with(args: &[std::ffi::OsString], password: &str, extra: &[&str]) -> std::process::Output {
+fn restic_with(
+    args: &[std::ffi::OsString],
+    password: &str,
+    extra: &[&str],
+) -> std::process::Output {
     let mut child = std::process::Command::new("restic")
         .args(args)
         .args(extra)
@@ -36,9 +41,18 @@ fn restic_with(args: &[std::ffi::OsString], password: &str, extra: &[&str]) -> s
         .stderr(std::process::Stdio::piped())
         .spawn()
         .unwrap();
-    child.stdin.take().unwrap().write_all(format!("{password}\n").as_bytes()).unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(format!("{password}\n").as_bytes())
+        .unwrap();
     let out = child.wait_with_output().unwrap();
-    assert!(out.status.success(), "restic {extra:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "restic {extra:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     out
 }
 
@@ -59,7 +73,12 @@ async fn storage_box_over_sftp() {
         // Pairing's step: the device's key and Réplique's, with the password once.
         let device_key = device_public_key();
         let seen = app
-            .install_keys(&endpoint, "", &password, &[device_key.clone(), app.public_key_line()])
+            .install_keys(
+                &endpoint,
+                "",
+                &password,
+                &[device_key.clone(), app.public_key_line()],
+            )
             .await
             .unwrap_or_else(|e| panic!("{mode}: {e:#}"));
         assert!(seen.is_some());
@@ -69,7 +88,10 @@ async fn storage_box_over_sftp() {
         assert!(app.known_hosts_lines(&host, port)[0].starts_with(&format!("[{host}]:{port} ")));
 
         // From now on Réplique's key logs in.
-        let conn = app.ssh_connect(&endpoint, Auth::Key(&app.ssh_key)).await.unwrap();
+        let conn = app
+            .ssh_connect(&endpoint, Auth::Key(&app.ssh_key))
+            .await
+            .unwrap();
         let sftp = conn.sftp().await.unwrap();
         let keys = String::from_utf8(sftp.read(".ssh/authorized_keys").await.unwrap()).unwrap();
         assert!(keys.contains("test-device") && keys.contains("replique-server"));
@@ -101,7 +123,9 @@ async fn storage_box_over_sftp() {
             .dump("latest", &format!("{}/hello.txt", data.display()), false)
             .await
             .unwrap();
-        let body = axum::body::to_bytes(dump.into_body(), 1 << 20).await.unwrap();
+        let body = axum::body::to_bytes(dump.into_body(), 1 << 20)
+            .await
+            .unwrap();
         assert_eq!(&body[..], b"over the bridge");
 
         // A different host key is refused.
@@ -117,7 +141,12 @@ async fn storage_box_over_sftp() {
         assert!(refused.is_err());
 
         // Removing a device with its data deletes the repository.
-        app.delete_repository_data(&endpoint, "", &password).await.unwrap();
-        assert!(app.measure(&access).await.is_err(), "the repository is gone");
+        app.delete_repository_data(&endpoint, "", &password)
+            .await
+            .unwrap();
+        assert!(
+            app.measure(&access).await.is_err(),
+            "the repository is gone"
+        );
     }
 }

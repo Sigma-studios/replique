@@ -18,7 +18,9 @@ async fn unlock_browse_download_and_forget() {
     let browser = Browser::login(&server.url).await;
 
     // A paired device with a real repository holding one snapshot.
-    let (_, location) = browser.post("/devices", &[("name", "PC"), ("kind", "nixos")]).await;
+    let (_, location) = browser
+        .post("/devices", &[("name", "PC"), ("kind", "nixos")])
+        .await;
     let device_id = location.trim_start_matches("/devices/").to_string();
     let code = pairing_code(&browser, &device_id).await;
     let reply: PairResponse = reqwest::Client::new()
@@ -56,12 +58,16 @@ async fn unlock_browse_download_and_forget() {
     assert!(form.contains("never written to disk or to logs"));
 
     // A wrong password is refused.
-    let (status, page) = browser.post(&format!("{base}/unlock"), &[("password", "not-it")]).await;
+    let (status, page) = browser
+        .post(&format!("{base}/unlock"), &[("password", "not-it")])
+        .await;
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains("Wrong password."), "{page}");
 
     // The right one unlocks.
-    let (status, location) = browser.post(&format!("{base}/unlock"), &[("password", PASSWORD)]).await;
+    let (status, location) = browser
+        .post(&format!("{base}/unlock"), &[("password", PASSWORD)])
+        .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{location}");
     assert_eq!(location, format!("{base}/snapshots"));
     let (status, page) = browser.get(&format!("{base}/snapshots")).await;
@@ -73,27 +79,46 @@ async fn unlock_browse_download_and_forget() {
     let dir = data.to_str().unwrap();
     let enc = |s: &str| url::form_urlencoded::byte_serialize(s.as_bytes()).collect::<String>();
     let (status, page) = browser
-        .get(&format!("{base}/browse?snapshot={snapshot}&path={}", enc(dir)))
+        .get(&format!(
+            "{base}/browse?snapshot={snapshot}&path={}",
+            enc(dir)
+        ))
         .await;
     assert_eq!(status, StatusCode::OK, "{page}");
-    assert!(page.contains("notes.txt") && page.contains("Photos/") && page.contains("été.txt"), "{page}");
+    assert!(
+        page.contains("notes.txt") && page.contains("Photos/") && page.contains("été.txt"),
+        "{page}"
+    );
 
     // Download one file: the exact bytes, streamed.
     let file = format!("{dir}/Photos/2019/IMG_2041.CR2");
     let r = browser
         .http
-        .get(format!("{}{base}/download?snapshot={snapshot}&path={}", server.url, enc(&file)))
+        .get(format!(
+            "{}{base}/download?snapshot={snapshot}&path={}",
+            server.url,
+            enc(&file)
+        ))
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), StatusCode::OK);
-    assert!(r.headers()["content-disposition"].to_str().unwrap().contains("IMG_2041.CR2"));
+    assert!(
+        r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("IMG_2041.CR2")
+    );
     assert_eq!(r.bytes().await.unwrap().to_vec(), photo);
 
     // Download a folder as a zip.
     let r = browser
         .http
-        .get(format!("{}{base}/download?zip=1&snapshot={snapshot}&path={}", server.url, enc(dir)))
+        .get(format!(
+            "{}{base}/download?zip=1&snapshot={snapshot}&path={}",
+            server.url,
+            enc(dir)
+        ))
         .send()
         .await
         .unwrap();
@@ -106,16 +131,24 @@ async fn unlock_browse_download_and_forget() {
         .find(|n| n.ends_with("notes.txt"))
         .expect("notes.txt in the zip");
     let mut text = String::new();
-    zip.by_name(&name).unwrap().read_to_string(&mut text).unwrap();
+    zip.by_name(&name)
+        .unwrap()
+        .read_to_string(&mut text)
+        .unwrap();
     assert_eq!(text, "bonjour, réplique");
 
     // A missing file is an error page, not a broken download.
     let (status, _) = browser
-        .get(&format!("{base}/download?snapshot={snapshot}&path={}", enc(&format!("{dir}/nope"))))
+        .get(&format!(
+            "{base}/download?snapshot={snapshot}&path={}",
+            enc(&format!("{dir}/nope"))
+        ))
         .await;
     assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
     // Arguments that could read as options are refused.
-    let (status, _) = browser.get(&format!("{base}/download?snapshot=--help&path=/x")).await;
+    let (status, _) = browser
+        .get(&format!("{base}/download?snapshot=--help&path=/x"))
+        .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // Lock forgets the password.
@@ -126,13 +159,23 @@ async fn unlock_browse_download_and_forget() {
     assert_eq!(server.app.unlocks.count(), 0);
 
     // So does staying idle past the timeout.
-    browser.post(&format!("{base}/unlock"), &[("password", PASSWORD)]).await;
-    assert_eq!(browser.get(&format!("{base}/snapshots")).await.0, StatusCode::OK);
+    browser
+        .post(&format!("{base}/unlock"), &[("password", PASSWORD)])
+        .await;
+    assert_eq!(
+        browser.get(&format!("{base}/snapshots")).await.0,
+        StatusCode::OK
+    );
     tokio::time::sleep(std::time::Duration::from_millis(3200)).await;
-    assert_eq!(browser.get(&format!("{base}/snapshots")).await.0, StatusCode::SEE_OTHER);
+    assert_eq!(
+        browser.get(&format!("{base}/snapshots")).await.0,
+        StatusCode::SEE_OTHER
+    );
 
     // And logging out.
-    browser.post(&format!("{base}/unlock"), &[("password", PASSWORD)]).await;
+    browser
+        .post(&format!("{base}/unlock"), &[("password", PASSWORD)])
+        .await;
     assert_eq!(server.app.unlocks.count(), 1);
     let (status, _) = browser.post("/logout", &[]).await;
     assert_eq!(status, StatusCode::SEE_OTHER);
@@ -144,5 +187,8 @@ async fn unlock_browse_download_and_forget() {
     let logs = logs();
     assert!(logs.contains("repository unlocked"), "logs were captured");
     assert!(logs.contains("restore download"));
-    assert!(!logs.contains(PASSWORD), "the password leaked into the logs");
+    assert!(
+        !logs.contains(PASSWORD),
+        "the password leaked into the logs"
+    );
 }

@@ -75,6 +75,14 @@ impl App {
     pub fn new(config: Config) -> anyhow::Result<App> {
         std::fs::create_dir_all(&config.state_dir)
             .with_context(|| format!("creating {}", config.state_dir.display()))?;
+        // The database names every device and holds sealed secrets; nobody
+        // but the server's user has any business reading the folder.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ =
+                std::fs::set_permissions(&config.state_dir, std::fs::Permissions::from_mode(0o700));
+        }
         let store = Store::open(&config.database_path())?;
         let secrets = SecretBox::load_or_create(&config.state_dir.join("master.key"))?;
         let owner = store.ensure_admin_owner(&config.owner_name)?;

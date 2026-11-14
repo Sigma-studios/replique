@@ -101,7 +101,10 @@ enabled = false
         state = dir.path().join("state").display(),
         hash = hash_file.display(),
         root = if local_root {
-            format!("local_root = {:?}", dir.path().join("box").display().to_string())
+            format!(
+                "local_root = {:?}",
+                dir.path().join("box").display().to_string()
+            )
         } else {
             String::new()
         },

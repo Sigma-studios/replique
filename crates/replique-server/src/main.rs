@@ -63,6 +63,7 @@ fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(default)),
         )
         .with_writer(std::io::stderr)
+        .with_ansi(std::io::IsTerminal::is_terminal(&std::io::stderr()))
         .init();
     let runtime = tokio::runtime::Runtime::new()?;
     match cli.command.unwrap_or(Command::Serve) {
