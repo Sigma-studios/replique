@@ -1,0 +1,1 @@
+{"message_type":"exit_error","code":10,"message":"Fatal: repository does not exist: unable to open config file: stat rclone:replique:/home/restic/config: no such file or directory\nIs there a repository at the following location?\nrclone:replique:/home/restic"}

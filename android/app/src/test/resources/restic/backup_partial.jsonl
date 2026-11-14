@@ -1,0 +1,3 @@
+{"message_type":"error","error":{"message":"open /storage/emulated/0/locked/secret.txt: permission denied"},"during":"archival","item":"/storage/emulated/0/locked/secret.txt"}
+{"message_type":"exit_error","code":3,"message":"Warning: at least one source file could not be read"}
+{"message_type":"summary","files_new":2,"files_changed":0,"files_unmodified":0,"dirs_new":8,"dirs_changed":0,"dirs_unmodified":0,"data_blobs":3,"tree_blobs":9,"data_added":3003950,"data_added_packed":3003108,"total_files_processed":2,"total_bytes_processed":3000006,"total_duration":0.778825917,"backup_start":"2026-11-14T22:57:34.46027+01:00","backup_end":"2026-11-14T22:57:35.239086+01:00","snapshot_id":"05d273ddd717f70c0498636b39d61e42c0120ff0adb189932878616acd1fbbf6"}
