@@ -95,6 +95,8 @@
       ],
       cursor: { points: { size: 8 } },
       legend: { live: true },
+      // The footer says times are UTC; the axes agree.
+      tzDate: function (ts) { return uPlot.tzDate(new Date(ts * 1e3), "Etc/UTC"); },
     };
     el.innerHTML = "";
     if (!data.x.length) {

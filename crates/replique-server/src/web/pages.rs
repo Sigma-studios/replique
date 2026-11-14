@@ -394,7 +394,7 @@ fn pairing_block(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup
                     p.muted { "No valid code." }
                 }
             }
-            form method="post" action={ "/devices/" (device.id) "/pairing-code" } {
+            form method="post" action={ "/devices/" (device.id) "/pairing-code" } style="margin-top: 0.8rem" {
                 (csrf_field(ctx))
                 button type="submit" { "New pairing code" }
             }
@@ -609,7 +609,8 @@ pub async fn device(
                 }
                 @if let Some(repo) = &repo {
                     div.actions style="margin-top: 0.6rem" {
-                        @if app.unlocks.is_unlocked(&admin.session, &repo.id, idle) {
+                        @if device.paired_at.is_none() {
+                        } @else if app.unlocks.is_unlocked(&admin.session, &repo.id, idle) {
                             a.button.primary href={ "/repos/" (repo.id) "/snapshots" } { "Browse snapshots" }
                         } @else {
                             a.button href={ "/repos/" (repo.id) "/unlock" } { "Unlock to browse and restore" }
@@ -618,14 +619,14 @@ pub async fn device(
                     }
                 }
             }
-            @if let Some(repo) = &repo {
+            @if let (Some(repo), true) = (&repo, device.paired_at.is_some()) {
                 h2 { "Size" }
                 div.card {
                     div.chart data-src={ "/storage/series?scope=repo:" (repo.id) "&range=30d&slot=" (slot) } data-scopes={ "repo:" (repo.id) } {}
                 }
             }
             (live)
-            @if device.kind != DeviceKind::Android {
+            @if device.kind != DeviceKind::Android && device.paired_at.is_some() {
                 h2 { "Mirrors" }
                 div.card {
                     p.small.muted { "This device can keep an encrypted byte copy of another device's repository, pulled through that repository's read-only login. It needs no password and cannot read it." }
@@ -1168,11 +1169,11 @@ pub async fn series(
                 .find(|d| d.id == repo.device_id)
                 .map(|d| d.name.clone())
                 .unwrap_or_default();
-            lines.push((
-                name,
-                slot_of(&repo.device_id),
-                app.store.series(&format!("repo:{}", repo.id), since)?,
-            ));
+            let points = app.store.series(&format!("repo:{}", repo.id), since)?;
+            // A repository never measured has nothing to stack.
+            if !points.is_empty() {
+                lines.push((name, slot_of(&repo.device_id), points));
+            }
         }
     } else if let Some(repo_id) = q.scope.strip_prefix("repo:") {
         let repo = app

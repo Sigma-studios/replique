@@ -489,7 +489,7 @@ impl Store {
     pub fn devices(&self) -> anyhow::Result<Vec<Device>> {
         let conn = self.0.lock();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {DEVICE_COLUMNS} FROM devices ORDER BY created_at, name"
+            "SELECT {DEVICE_COLUMNS} FROM devices ORDER BY created_at, id"
         ))?;
         let rows = stmt.query_map([], device_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
@@ -622,7 +622,7 @@ impl Store {
     pub fn repositories(&self) -> anyhow::Result<Vec<Repository>> {
         let conn = self.0.lock();
         let mut stmt = conn.prepare(&format!(
-            "SELECT {REPO_COLUMNS} FROM repositories ORDER BY created_at"
+            "SELECT {REPO_COLUMNS} FROM repositories ORDER BY created_at, id"
         ))?;
         let rows = stmt.query_map([], repo_row)?;
         Ok(rows.collect::<Result<_, _>>()?)
