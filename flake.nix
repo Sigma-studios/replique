@@ -94,10 +94,17 @@
       devShells = forSystems all (
         pkgs:
         let
+          # What android/ builds with: compileSdk 37 (current AndroidX refuses
+          # 36), targetSdk 36, and the NDK whose clang links restic and rclone
+          # with cgo (without it they cannot resolve host names on Android).
           android = pkgs.androidenv.composeAndroidPackages {
-            platformVersions = [ "36" ];
+            platformVersions = [
+              "36"
+              "37"
+            ];
             buildToolsVersions = [ "36.0.0" ];
             includeNDK = true;
+            ndkVersions = [ "29.0.14206865" ];
           };
         in
         {
@@ -123,6 +130,7 @@
             shellHook = lib.optionalString pkgs.stdenv.isLinux ''
               export ANDROID_HOME=${android.androidsdk}/libexec/android-sdk
               export ANDROID_SDK_ROOT=$ANDROID_HOME
+              export ANDROID_NDK_HOME=$ANDROID_HOME/ndk/29.0.14206865
             '';
           };
         }
