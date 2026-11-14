@@ -104,7 +104,8 @@ makes it `2770 replique-client:replique-client` and puts every job user in the
 | `restic-password` | the repository's password | 0640 |
 | `ssh/id_ed25519`, `.pub` | the device's key | 0640 |
 | `ssh/known_hosts` | the Storage Box's host keys, from pairing | 0660 |
-| `ssh/config` | the host alias (`replique-storage`), included by `/etc/ssh/ssh_config` | 0664 |
+| `ssh/config` | the host alias (`replique-storage`), for restic's `ssh -F` | 0664 |
+| `ssh/include.conf` | the same, root's, included by `/etc/ssh/ssh_config` (OpenSSH refuses an included file that is not root's or is group-writable, and then every connection fails) | 0644 |
 | `spool/` | reports waiting for the server; `spool/rejected/` the ones it refused | |
 | `runs/<job>.json` | each job's last runs, for `status` | |
 | `declared/<job>.json` | the job declaration the server last accepted | |
@@ -275,7 +276,7 @@ Names are 1 to 64 of `a-z`, `0-9`, `-`, `_`.
   rebuild. Plus `replique-<name>.timer` when `schedule` is set.
 * `replique-<name>` commands: restic on the job's repository.
 * The `replique-client` system user and group, the state directory
-  (`2770`), and `Include <stateDir>/ssh/config` in `/etc/ssh/ssh_config` (the
+  (`2770`), and `Include <stateDir>/ssh/include.conf` in `/etc/ssh/ssh_config` (the
   alias works once paired: `sftp replique-storage`).
 * With `inhibitSleep` on any job, `security.polkit.enable` and a rule allowing
   `org.freedesktop.login1.inhibit-block-sleep` for those jobs' users: logind

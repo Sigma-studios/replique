@@ -45,8 +45,12 @@ pub enum Kind {
     Secret,
     /// Anything a job user may need to rewrite.
     Shared,
-    /// Readable by anyone (public key, known_hosts, ssh config).
+    /// Readable by anyone (public key, device.json, the ssh config for `-F`).
     Public,
+    /// Included by the system's ssh_config: OpenSSH refuses an included file
+    /// not owned by root (or the user running ssh) or writable by others, and
+    /// then fails every connection, so only root writes it, 0644, and keeps it.
+    System,
 }
 
 impl State {
@@ -74,6 +78,10 @@ impl State {
     }
     pub fn ssh_config_file(&self) -> PathBuf {
         self.ssh_dir().join("config")
+    }
+    /// The same host alias, for `Include` in `/etc/ssh/ssh_config`.
+    pub fn ssh_include_file(&self) -> PathBuf {
+        self.ssh_dir().join("include.conf")
     }
     pub fn spool_dir(&self) -> PathBuf {
         self.dir.join("spool")
@@ -127,6 +135,7 @@ impl State {
             (Kind::Shared, false) => 0o600,
             (Kind::Public, true) => 0o664,
             (Kind::Public, false) => 0o644,
+            (Kind::System, _) => 0o644,
         }
     }
 
@@ -179,7 +188,15 @@ impl State {
             let _ = fs::remove_file(&tmp);
             return Err(Error::msg(format!("{}: {e}", path.display())));
         }
-        self.adopt_owner(&tmp);
+        if kind == Kind::System {
+            // Whoever created the file owns it: only root's copy is any use.
+            if fs::metadata(&tmp).map(|m| m.uid()).unwrap_or(1) != 0 {
+                let _ = fs::remove_file(&tmp);
+                return Ok(());
+            }
+        } else {
+            self.adopt_owner(&tmp);
+        }
         fs::rename(&tmp, path).map_err(|e| Error::msg(format!("{}: {e}", path.display())))?;
         Ok(())
     }

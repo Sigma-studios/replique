@@ -176,8 +176,9 @@ pub fn pair(config: &ClientConfig, state: &State, opts: &PairOptions) -> Result<
 }
 
 /// `ssh/config` in the state directory: the Storage Box login under the alias
-/// restic's `sftp.command` and the `replique-<job>` wrappers use. The system's
-/// `ssh_config` includes it, so `sftp <alias>` works by hand too.
+/// restic's `sftp.command` uses (with `ssh -F`). `ssh/include.conf`, the same
+/// written by root, is what the system's `ssh_config` includes, so `sftp
+/// <alias>` works by hand too.
 pub fn ssh_config_text(config: &ClientConfig, state: &State, device: &Device) -> String {
     let s = &device.storage;
     let strict = if s.known_hosts.is_empty() {
@@ -216,14 +217,13 @@ fn ssh_quote(p: &Path) -> String {
 }
 
 fn write_ssh_config(config: &ClientConfig, state: &State, device: &Device) -> Result<(), Error> {
-    state.write(
-        &state.ssh_config_file(),
-        ssh_config_text(config, state, device).as_bytes(),
-        Kind::Public,
-    )
+    let text = ssh_config_text(config, state, device);
+    state.write(&state.ssh_config_file(), text.as_bytes(), Kind::Public)?;
+    // Written only when running as root (pairing is), skipped otherwise.
+    state.write(&state.ssh_include_file(), text.as_bytes(), Kind::System)
 }
 
-/// Rewrites `ssh/config` if the alias or the state directory moved since
+/// Rewrites the SSH config if the alias or the state directory moved since
 /// pairing. Failing to is not fatal: the old file still works for its alias.
 pub fn ensure_ssh_config(config: &ClientConfig, state: &State) {
     let Ok(Some(device)) = state.load_device() else {
@@ -231,9 +231,12 @@ pub fn ensure_ssh_config(config: &ClientConfig, state: &State) {
     };
     let text = ssh_config_text(config, state, &device);
     if fs::read_to_string(state.ssh_config_file()).ok().as_deref() != Some(&text)
-        && let Err(e) = write_ssh_config(config, state, &device)
+        && let Err(e) = state.write(&state.ssh_config_file(), text.as_bytes(), Kind::Public)
     {
         log!("could not update the SSH config: {e}");
+    }
+    if fs::read_to_string(state.ssh_include_file()).ok().as_deref() != Some(&text) {
+        let _ = state.write(&state.ssh_include_file(), text.as_bytes(), Kind::System);
     }
 }
 

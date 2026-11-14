@@ -120,7 +120,7 @@ pkgs.testers.runNixOSTest {
         client.fail("systemctl cat replique-windows.timer")
         client.succeed("test \"$(stat -c '%U:%G %a' /var/lib/replique-client)\" = 'replique-client:replique-client 2770'")
         client.succeed("id -nG alice | grep -w replique-client")
-        client.succeed("grep -F 'Include /var/lib/replique-client/ssh/config' /etc/ssh/ssh_config")
+        client.succeed("grep -F 'Include /var/lib/replique-client/ssh/include.conf' /etc/ssh/ssh_config")
         client.succeed("grep -F 'org.freedesktop.login1.inhibit-block-sleep' /etc/polkit-1/rules.d/*.rules")
         cfg = json.loads(client.succeed("cat /etc/replique/client.json"))
         assert cfg["jobs"]["home"]["retention"] == {
@@ -133,7 +133,10 @@ pkgs.testers.runNixOSTest {
         assert server_state()["pairs"][0]["ssh_public_key"].split()[1] in client.succeed("cat ${key}/key.pub")
         for f in ["token", "restic-password", "ssh/id_ed25519"]:
             client.succeed(f"test \"$(stat -c '%U:%G %a' /var/lib/replique-client/{f})\" = 'replique-client:replique-client 640'")
+        # Included by /etc/ssh/ssh_config: OpenSSH insists it be root's.
+        client.succeed("test \"$(stat -c '%U %a' /var/lib/replique-client/ssh/include.conf)\" = 'root 644'")
         client.succeed("echo 'ls /home/restic' | sudo -u alice sftp -b - replique-storage")
+        client.succeed("echo 'ls /home/restic' | sftp -b - replique-storage")
 
     with subtest("a backup, its prune and its check are three reported runs"):
         client.succeed(

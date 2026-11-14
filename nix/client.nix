@@ -414,9 +414,8 @@ in
 
       # Owner of the state directory and its files. Root and the job users reach
       # them through the group; ssh refuses a group-readable key only when the
-      # user running it owns the key, which neither does.
-      # Not `replique`: the server's module may own that name on a machine
-      # running both.
+      # user running it owns the key, which neither does. Not `replique`: the
+      # server's module may own that name on a machine running both.
       users.users.replique-client = {
         isSystemUser = true;
         group = "replique-client";
@@ -432,7 +431,7 @@ in
       # first, in case configuration before this left a Host block open.
       programs.ssh.extraConfig = ''
         Match all
-        Include ${cfg.stateDir}/ssh/config
+        Include ${cfg.stateDir}/ssh/include.conf
       '';
 
       security.polkit = mkIf (sleepUsers != [ ]) {
