@@ -3,13 +3,13 @@
 //! runs, the declared job specs).
 //!
 //! Two layouts. Set up by the NixOS module, the directory belongs to the
-//! `replique` system user and group with the setgid bit, and every job user is in
-//! that group: files are group-readable (secrets) or group-writable (spool,
-//! status), owned by `replique`. That owner matters: OpenSSH refuses a private key
-//! that is readable by others *and owned by the user running ssh*, so a key owned
-//! by root (or by the job user) and shared through the group would break either
-//! root or the job user. Anywhere else (a plain directory, tests), files are
-//! private to whoever runs the client.
+//! `replique-client` system user and group with the setgid bit, and every job
+//! user is in that group: files are group-readable (secrets) or group-writable
+//! (spool, status), owned by `replique-client`. That owner matters: OpenSSH
+//! refuses a private key that is readable by others *and owned by the user
+//! running ssh*, so a key owned by root (or by the job user) and shared through
+//! the group would break either root or the job user. Anywhere else (a plain
+//! directory, tests), files are private to whoever runs the client.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::Write;
@@ -106,7 +106,7 @@ impl State {
             Ok(t) => Ok(Some(t.trim().to_string())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(e) => Err(Error::msg(format!(
-                "{}: {e} (is this user in the replique group?)",
+                "{}: {e} (is this user in the replique-client group?)",
                 self.token_file().display()
             ))),
         }

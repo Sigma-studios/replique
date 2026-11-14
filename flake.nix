@@ -55,9 +55,41 @@
       nixosModules.default = import ./nix/module.nix self;
       nixosModules.replique = self.nixosModules.default;
 
-      checks = forSystems linux (pkgs: {
-        inherit (self.packages.${pkgs.stdenv.hostPlatform.system}) replique-server replique-client;
-      });
+      checks = forSystems linux (
+        pkgs:
+        let
+          system = pkgs.stdenv.hostPlatform.system;
+          # nix/example.nix (the PC's jobs) on a bare machine: the module's
+          # assertions hold and it writes this client.json.
+          example = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              ./nix/example.nix
+              {
+                boot.loader.grub.enable = false;
+                fileSystems."/" = {
+                  device = "none";
+                  fsType = "tmpfs";
+                };
+                users.users.sigma.isNormalUser = true;
+                system.stateVersion = "26.05";
+              }
+            ];
+          };
+          failed = map (a: a.message) (lib.filter (a: !a.assertion) example.config.assertions);
+        in
+        {
+          inherit (self.packages.${system}) replique-server replique-client;
+          example =
+            assert lib.assertMsg (failed == [ ]) (lib.concatStringsSep "\n" failed);
+            example.config.environment.etc."replique/client.json".source;
+          # Pairing, a backup with its prune and check, a refused job, a mirror
+          # and an outage, on three VMs (needs KVM):
+          # `nix build .#checks.x86_64-linux.vm -L`.
+          vm = import ./nix/test.nix { inherit pkgs self; };
+        }
+      );
 
       devShells = forSystems all (
         pkgs:

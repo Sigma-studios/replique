@@ -6,7 +6,9 @@
 let
   inherit (pkgs) lib;
 
-  craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.default);
+  # The minimal profile: building needs no docs, clippy or rustfmt, and the
+  # default profile's docs alone are hundreds of megabytes in the store.
+  craneLib = (crane.mkLib pkgs).overrideToolchain (p: p.rust-bin.stable.latest.minimal);
 
   src = lib.fileset.toSource {
     root = ../.;
@@ -51,6 +53,24 @@ let
     );
 in
 {
-  replique-server = bin "replique-server" "Réplique's server: API, website, measurements and alerts" { };
-  replique-client = bin "replique-client" "Runs restic on a device and reports every run to Réplique" { };
+  replique-server =
+    bin "replique-server" "Réplique's server: API, website, measurements and alerts"
+      { };
+  # restic, rclone (mirrors) and ssh (restic's SFTP backend) come along, after
+  # whatever PATH already has.
+  replique-client =
+    bin "replique-client" "Runs restic on a device and reports every run to Réplique"
+      {
+        nativeBuildInputs = [ pkgs.makeWrapper ];
+        postInstall = ''
+          wrapProgram $out/bin/replique-client \
+            --suffix PATH : ${
+              lib.makeBinPath [
+                pkgs.restic
+                pkgs.rclone
+                pkgs.openssh
+              ]
+            }
+        '';
+      };
 }
