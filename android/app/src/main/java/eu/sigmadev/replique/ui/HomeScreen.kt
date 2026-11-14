@@ -77,6 +77,11 @@ fun HomeScreen(app: RepliqueApp, modifier: Modifier = Modifier) {
     LaunchedEffect(Unit) {
         if (Build.VERSION.SDK_INT >= 33) notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
+    // The periodic backup is only scheduled once the app can read the files
+    // (pairing does not wait for the permission).
+    LaunchedEffect(canRead) {
+        if (canRead) Scheduler.ensureScheduled(context, config)
+    }
 
     Column(
         modifier
@@ -164,7 +169,7 @@ private fun LiveProgress(live: eu.sigmadev.replique.backup.LiveRun) {
     }
     LinearProgressIndicator(progress = { p.percentDone.toFloat() }, modifier = Modifier.fillMaxWidth())
     Text("${Format.percent(p.percentDone)} · ${Format.bytes(p.bytesDone)} sur ${Format.bytes(p.totalBytes)}")
-    Text("${Format.count(p.filesDone)} fichiers sur ${Format.count(p.totalFiles)}", style = MaterialTheme.typography.bodySmall)
+    Text("${Format.count(p.filesDone)} sur ${Format.files(p.totalFiles)}", style = MaterialTheme.typography.bodySmall)
     p.secondsRemaining?.let { Text("Encore environ ${Format.duration(it)}", style = MaterialTheme.typography.bodySmall) }
     p.currentFiles.firstOrNull()?.let {
         Text(it.substringAfter("/storage/emulated/0/"), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -189,7 +194,7 @@ private fun RunSummary(run: RunRecord?, empty: String) {
     Text(Format.moment(run.finishedAt))
     if (run.filesProcessed > 0) {
         Text(
-            "${Format.count(run.filesProcessed)} fichiers, ${Format.bytes(run.bytesProcessed)} · ${Format.bytes(run.bytesAdded)} envoyés",
+            "${Format.files(run.filesProcessed)}, ${Format.bytes(run.bytesProcessed)} · ${Format.bytes(run.bytesAdded)} envoyés",
             style = MaterialTheme.typography.bodySmall,
         )
     }

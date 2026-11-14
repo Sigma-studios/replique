@@ -84,7 +84,9 @@ class PairingFlow(private val app: RepliqueApp) {
         // answers, the defaults apply.
         val runner = app.backupRunner()
         val config = runner.refreshConfig(app.apiFor(pairing, secrets))
-        Scheduler.schedule(app, config)
+        // Without "All files access" a run could only fail; Home schedules it
+        // as soon as the user grants it.
+        if (app.canReadSharedStorage()) Scheduler.ensureScheduled(app, config)
 
         val failed = app.restic(pairing, secrets).ensureInitialized()
         if (failed != null) {

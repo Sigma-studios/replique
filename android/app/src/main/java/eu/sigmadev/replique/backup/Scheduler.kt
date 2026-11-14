@@ -44,6 +44,20 @@ object Scheduler {
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(SCHEDULED, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
+    /**
+     * Schedules the periodic backup unless it already is, without touching
+     * an existing schedule. Called once the app can read shared storage:
+     * scheduling earlier would start a run that can only fail.
+     */
+    fun ensureScheduled(context: Context, config: DeviceConfig) {
+        val hours = config.intervalHours.coerceAtLeast(1).toLong()
+        val request = PeriodicWorkRequestBuilder<BackupWorker>(hours, TimeUnit.HOURS)
+            .setConstraints(constraints(config.conditions))
+            .addTag(SCHEDULED)
+            .build()
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(SCHEDULED, ExistingPeriodicWorkPolicy.KEEP, request)
+    }
+
     /** "Back up now": no conditions (the protocol applies them to scheduled runs only). */
     fun backupNow(context: Context) {
         val request = OneTimeWorkRequestBuilder<BackupWorker>()

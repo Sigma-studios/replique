@@ -121,7 +121,7 @@ fun FreeUpSpaceScreen(app: RepliqueApp, modifier: Modifier = Modifier) {
             }
         } else {
             Text(
-                "Sauvegarde du ${Format.moment(snapshot.snapshotTime)}, vérifiée sur Hetzner ${Format.moment(snapshot.verifiedAt)}, " +
+                "Sauvegarde faite ${Format.moment(snapshot.snapshotTime)}, vérifiée sur Hetzner ${Format.moment(snapshot.verifiedAt)}, " +
                     "copiée sur ${snapshot.mirroredBy ?: "le PC"} ${Format.moment(snapshot.mirroredAt)}.",
                 style = MaterialTheme.typography.bodyMedium,
             )
@@ -145,7 +145,7 @@ fun FreeUpSpaceScreen(app: RepliqueApp, modifier: Modifier = Modifier) {
             } else {
                 val groups = list.groupBy { FreeUpSpace.group(it.path) }.toList().sortedByDescending { (_, f) -> f.sumOf { it.size } }
                 val selectedSize = list.filter { it.path in selected }.sumOf { it.size }
-                Text("${list.size} fichiers, ${Format.bytes(list.sumOf { it.size })}. Sélection : ${selected.size} (${Format.bytes(selectedSize)}).")
+                Text("${Format.files(list.size.toLong())}, ${Format.bytes(list.sumOf { it.size })}. Sélection : ${selected.size} (${Format.bytes(selectedSize)}).")
                 Button(onClick = { confirm = true }, enabled = selected.isNotEmpty(), modifier = Modifier.fillMaxWidth()) {
                     Text("Supprimer la sélection")
                 }
@@ -162,7 +162,7 @@ fun FreeUpSpaceScreen(app: RepliqueApp, modifier: Modifier = Modifier) {
                                 })
                                 Column(Modifier.weight(1f)) {
                                     Text(group, style = MaterialTheme.typography.titleSmall)
-                                    Text("${groupFiles.size} fichiers, ${Format.bytes(groupFiles.sumOf { it.size })}", style = MaterialTheme.typography.bodySmall)
+                                    Text("${Format.files(groupFiles.size.toLong())}, ${Format.bytes(groupFiles.sumOf { it.size })}", style = MaterialTheme.typography.bodySmall)
                                 }
                                 Text(if (group in expanded) "▲" else "▼", Modifier.padding(8.dp))
                             }

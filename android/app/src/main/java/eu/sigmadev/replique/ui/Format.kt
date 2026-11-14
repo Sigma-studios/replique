@@ -28,6 +28,9 @@ object Format {
 
     fun count(n: Long): String = "%,d".format(locale, n)
 
+    /** "1 fichier", "0 fichier", "2 fichiers": French keeps 0 and 1 singular. */
+    fun files(n: Long): String = "${count(n)} fichier" + if (n > 1) "s" else ""
+
     fun duration(seconds: Long): String {
         val d = Duration.ofSeconds(seconds.coerceAtLeast(0))
         return when {

@@ -11,6 +11,7 @@ import eu.sigmadev.replique.api.Spool
 import eu.sigmadev.replique.backup.BackupRunner
 import eu.sigmadev.replique.backup.LiveRun
 import eu.sigmadev.replique.backup.Notifications
+import eu.sigmadev.replique.backup.Scheduler
 import eu.sigmadev.replique.data.KeystoreSecretStore
 import eu.sigmadev.replique.data.Pairing
 import eu.sigmadev.replique.data.SecretStore
@@ -65,6 +66,7 @@ class RepliqueApp : Application() {
         live = live,
         clientVersion = userAgent,
         resticVersion = BuildConfig.RESTIC_VERSION,
+        onConfigChanged = { config -> if (canReadSharedStorage()) Scheduler.schedule(this, config) },
     )
 
     /** "All files access" on Android 11+, the storage permission before. */

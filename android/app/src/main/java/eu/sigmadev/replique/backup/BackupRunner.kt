@@ -70,6 +70,7 @@ class BackupRunner(
     private val clientVersion: String,
     private val resticVersion: String,
     private val clock: () -> Instant = Instant::now,
+    private val onConfigChanged: (DeviceConfig) -> Unit = {},
 ) {
     /**
      * Runs a backup then a check. [deadline] is when the backup must stop
@@ -110,7 +111,11 @@ class BackupRunner(
     suspend fun refreshConfig(api: RepliqueApi): DeviceConfig {
         val before = store.current
         when (val reply = io { api.deviceConfig(before.configEtag.takeIf { before.config != null }) }) {
-            is ApiResult.Ok -> store.update { it.copy(config = reply.value, configEtag = reply.etag) }
+            is ApiResult.Ok -> {
+                store.update { it.copy(config = reply.value, configEtag = reply.etag) }
+                // New interval or conditions from the website: the schedule follows.
+                if (reply.value != before.config) onConfigChanged(reply.value)
+            }
             else -> Unit
         }
         val config = store.current.effectiveConfig
