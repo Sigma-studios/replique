@@ -1,0 +1,58 @@
+{
+  "path": "/storage_boxes/{id}/subaccounts",
+  "method": "POST",
+  "request": {
+    "home_directory": "my-backup/server01",
+    "password": "string",
+    "access_settings": {
+      "reachable_externally": false,
+      "samba_enabled": false,
+      "ssh_enabled": false,
+      "webdav_enabled": false,
+      "readonly": false
+    },
+    "name": "my-name",
+    "description": "my-backup-server01",
+    "labels": {
+      "environment": "prod",
+      "example.com/my": "label",
+      "just-a-key": ""
+    }
+  },
+  "status": 201,
+  "response": {
+    "subaccount": {
+      "id": 42,
+      "storage_box": 43
+    },
+    "action": {
+      "id": 13,
+      "command": "create_subaccount",
+      "status": "running",
+      "progress": 0,
+      "started": "2016-01-30T23:50:00Z",
+      "finished": null,
+      "resources": [
+        {
+          "id": 42,
+          "type": "storage_box"
+        },
+        {
+          "id": 43,
+          "type": "storage_box_subaccount"
+        }
+      ],
+      "error": {
+        "code": "action_failed",
+        "message": "Action failed"
+      }
+    }
+  },
+  "error": {
+    "error": {
+      "code": "unauthorized",
+      "message": "unable to authenticate",
+      "details": null
+    }
+  }
+}

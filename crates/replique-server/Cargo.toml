@@ -6,5 +6,45 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "replique-server"
+path = "src/main.rs"
+
 [dependencies]
 replique-proto.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+url.workspace = true
+anyhow = "1"
+argon2 = "0.5"
+axum = "0.8"
+base64 = "0.22"
+bytes = "1"
+chacha20poly1305 = "0.10"
+clap = { version = "4", features = ["derive", "env"] }
+futures-util = "0.3"
+hex = "0.4"
+maud = "0.27"
+parking_lot = "0.12"
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+rand = "0.9"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
+# Pure-Rust SSH with the ring backend: no OpenSSH binary and no C toolchain for
+# aws-lc, so the same static binary runs in the Docker image and on a NAS.
+russh = { version = "0.65", default-features = false, features = ["ring", "flate2"] }
+russh-sftp = "3"
+sha2 = "0.10"
+tokio = { version = "1", features = ["full"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["io"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zeroize = { version = "1", features = ["zeroize_derive"] }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "cookies", "stream"] }
+tempfile = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }

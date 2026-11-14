@@ -1,0 +1,36 @@
+{
+  "path": "/storage_boxes/{id}/subaccounts/{subaccount_id}/actions/change_home_directory",
+  "method": "POST",
+  "request": {
+    "home_directory": "my-backup/server01"
+  },
+  "status": 201,
+  "response": {
+    "action": {
+      "id": 13,
+      "command": "change_home_directory",
+      "status": "running",
+      "progress": 0,
+      "started": "2016-01-30T23:50:00Z",
+      "finished": null,
+      "resources": [
+        {
+          "id": 42,
+          "type": "storage_box"
+        },
+        {
+          "id": 42,
+          "type": "storage_box_subaccount"
+        }
+      ],
+      "error": null
+    }
+  },
+  "error": {
+    "error": {
+      "code": "unauthorized",
+      "message": "unable to authenticate",
+      "details": null
+    }
+  }
+}

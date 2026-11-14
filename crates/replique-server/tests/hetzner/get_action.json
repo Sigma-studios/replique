@@ -1,0 +1,32 @@
+{
+  "path": "/storage_boxes/actions/{id}",
+  "method": "GET",
+  "status": 200,
+  "response": {
+    "action": {
+      "id": 42,
+      "command": "start_resource",
+      "status": "running",
+      "started": "2016-01-30T23:55:00Z",
+      "finished": "2016-01-30T23:55:00Z",
+      "progress": 100,
+      "resources": [
+        {
+          "id": 42,
+          "type": "server"
+        }
+      ],
+      "error": {
+        "code": "action_failed",
+        "message": "Action failed"
+      }
+    }
+  },
+  "error": {
+    "error": {
+      "code": "unauthorized",
+      "message": "unable to authenticate",
+      "details": null
+    }
+  }
+}
