@@ -169,7 +169,9 @@ class BackupRunnerDeviceTest {
     fun offlineReportsAreSpooledAndSentLater(): Unit = runBlocking {
         File(data, "a.txt").writeText("a")
         val server = RecordingServer(config()).apply { up = false }
-        val store = pairedStore()
+        // Rules received earlier still apply while the server is down (with
+        // none, the defaults would back up all of shared storage).
+        val store = pairedStore().apply { update { it.copy(config = config()) } }
         val spool = Spool(File(work, "spool"))
         val outcome = runner(server, store, spool).run()
         // The backup does not need the server.

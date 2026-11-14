@@ -9,8 +9,9 @@ import java.time.Instant
  * per 24 hours, then calls `Service.onTimeout` and gives it seconds to stop
  * before crashing it. A first backup of a phone easily takes longer, so the app
  * keeps its own account of the time used and stops restic cleanly a little
- * before the system would; restic keeps what it uploaded (its index is saved
- * every few minutes), and the next run picks up from there. The system resets
+ * before the system would. restic writes an index of what it uploaded at least
+ * every ten minutes during a backup, so the next run skips everything but the
+ * last few minutes' worth and picks up from there. The system resets
  * the allowance when the user opens the app, and so does this account.
  */
 object ForegroundBudget {
