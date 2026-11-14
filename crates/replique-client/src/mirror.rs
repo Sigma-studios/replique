@@ -243,11 +243,36 @@ fn sftp_source(state: &State, source: &MirrorSource) -> Result<Source, Error> {
         state.write(&path, (known.join("\n") + "\n").as_bytes(), Kind::Shared)?;
         flags.push("--sftp-known-hosts-file".into());
         flags.push(path.to_string_lossy().into_owned());
+        // Go's SSH client asks for the server's preferred host key type and
+        // calls a known host with a key of another type a mismatch. Asking only
+        // for the types we hold keys of avoids that.
+        flags.push("--sftp-host-key-algorithms".into());
+        flags.push(host_key_algorithms(&known).join(" "));
     }
     Ok(Source {
         remote: format!(":sftp:{}", s.repo_path),
         flags,
     })
+}
+
+/// The SSH host key algorithms matching the key types of known_hosts lines.
+fn host_key_algorithms(known: &[String]) -> Vec<String> {
+    let mut algos: Vec<String> = Vec::new();
+    for line in known {
+        let Some(kind) = line.split_whitespace().nth(1) else {
+            continue;
+        };
+        let names: &[&str] = match kind {
+            "ssh-rsa" => &["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"],
+            other => &[other][..],
+        };
+        for n in names {
+            if !algos.iter().any(|a| a == n) {
+                algos.push(n.to_string());
+            }
+        }
+    }
+    algos
 }
 
 #[derive(Deserialize)]
@@ -564,6 +589,19 @@ mod tests {
         assert_eq!(again.hashed, 1);
         assert_eq!(again.new_files, 0);
         assert_eq!(again.mismatches.len(), 1);
+    }
+
+    #[test]
+    fn host_key_types() {
+        let known = [
+            "[box]:23 ssh-ed25519 AAAA".to_string(),
+            "[box]:23 ssh-rsa AAAA".to_string(),
+            "[other]:23 ssh-ed25519 AAAA".to_string(),
+        ];
+        assert_eq!(
+            host_key_algorithms(&known),
+            ["ssh-ed25519", "rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"]
+        );
     }
 
     #[test]
