@@ -69,6 +69,12 @@ impl TestServer {
 /// Starts a server whose repositories are folders under `<tmp>/box`;
 /// `extra` is appended to its TOML configuration.
 pub async fn start(extra: &str) -> TestServer {
+    start_with(extra, true).await
+}
+
+/// Like `start`, optionally without the local root (to reach a real SFTP
+/// server).
+pub async fn start_with(extra: &str, local_root: bool) -> TestServer {
     init_logs();
     let dir = tempfile::tempdir().unwrap();
     let hash_file = dir.path().join("admin.hash");
@@ -89,16 +95,21 @@ owner_name = "Sigma"
 [measurement]
 enabled = false
 [storage_box]
-local_root = "{root}"
+{root}
 {extra}
 "#,
         state = dir.path().join("state").display(),
         hash = hash_file.display(),
-        root = dir.path().join("box").display(),
+        root = if local_root {
+            format!("local_root = {:?}", dir.path().join("box").display().to_string())
+        } else {
+            String::new()
+        },
     );
     let config = Config::parse(&toml).unwrap();
     let mut app = App::new(config).unwrap();
     app.hetzner_poll = Duration::from_millis(10);
+    app.self_exe = env!("CARGO_BIN_EXE_replique-server").into();
     let app = Arc::new(app);
     let router = replique_server::router(app.clone());
     tokio::spawn(async move {

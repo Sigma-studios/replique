@@ -246,7 +246,9 @@ impl App {
                     "-r".into(),
                     format!("sftp:{}@{}:{}", endpoint.username, endpoint.host, path).into(),
                     "-o".into(),
-                    format!("sftp.command={command}").into(),
+                    // restic reads each `-o` as a CSV field, then splits the
+                    // command like a shell: quote for both.
+                    format!("\"sftp.command={}\"", command.replace('"', "\"\"")).into(),
                 ])
             }
         }
