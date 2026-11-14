@@ -192,7 +192,16 @@ pub fn router(app: Arc<App>) -> Router {
 /// The background work: measurements, alert checks, expiring passwords.
 pub fn spawn_background(app: &Arc<App>) {
     if app.config.measurement.enabled {
+        // Its first round runs at once, which also reads the box's quota and
+        // sub-account limit for the Settings page.
         tokio::spawn(measure::run_loop(app.clone()));
+    } else if app.hetzner().is_ok() {
+        let app = app.clone();
+        tokio::spawn(async move {
+            if let Err(e) = measure::refresh_box(&app).await {
+                tracing::warn!("reading the Storage Box from Hetzner: {e:#}");
+            }
+        });
     }
     tokio::spawn(alerts::run_loop(app.clone()));
     tokio::spawn(restore::sweep_loop(app.clone()));
