@@ -1054,7 +1054,13 @@ impl Store {
         let mut conn = self.0.lock();
         let tx = conn.transaction()?;
         for (resolution, keep) in RESOLUTIONS {
-            let bucket = at - at.rem_euclid(resolution);
+            // The finest points keep their exact time: the drift check compares
+            // it with when runs finished.
+            let bucket = if resolution == RESOLUTIONS[0].0 {
+                at
+            } else {
+                at - at.rem_euclid(resolution)
+            };
             tx.execute(
                 "INSERT INTO measurements (scope, resolution, at, bytes, files, source) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
                  ON CONFLICT (scope, resolution, at) DO UPDATE SET bytes = ?4, files = ?5, source = ?6",

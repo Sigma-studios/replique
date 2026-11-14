@@ -1194,7 +1194,7 @@ pub async fn series(
     }
     let mut x: Vec<i64> = lines
         .iter()
-        .flat_map(|(_, _, pts)| pts.iter().map(|p| p.at))
+        .flat_map(|(_, _, pts)| pts.iter().map(|p| slot_time(p.at)))
         .collect();
     x.sort_unstable();
     x.dedup();
@@ -1202,7 +1202,7 @@ pub async fn series(
         .into_iter()
         .map(|(label, slot, pts)| {
             let by_time: std::collections::HashMap<i64, i64> =
-                pts.iter().map(|p| (p.at, p.bytes)).collect();
+                pts.iter().map(|p| (slot_time(p.at), p.bytes)).collect();
             // In a stack, a repository not measured yet at a time holds its
             // last known size rather than dropping to zero.
             let mut last = None;
@@ -1227,6 +1227,12 @@ pub async fn series(
         })
         .collect();
     Ok(Json(SeriesData { x, series, stacked }))
+}
+
+/// Repositories are measured one after the other, seconds apart: on a chart
+/// their points share the 5-minute slot they fall in, so stacks line up.
+fn slot_time(at: i64) -> i64 {
+    at - at.rem_euclid(300)
 }
 
 // ---------------------------------------------------------------- problems
