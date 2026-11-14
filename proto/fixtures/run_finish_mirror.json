@@ -1,0 +1,18 @@
+{
+  "status": "success",
+  "exit_code": 0,
+  "finished_at": "2026-11-14T04:30:00Z",
+  "mirror": {
+    "source_device_id": "dev_01JCX5B2K9P4Q8R1S6T3U7V0CD",
+    "files_copied": 38,
+    "bytes_copied": 1903456789,
+    "files_removed": 0,
+    "files_verified": 38,
+    "hash_mismatches": [],
+    "snapshot_ids": ["a3c1e5f7092b4d6f8a1c3e5f7092b4d6f8a1c3e5f7092b4d6f8a1c3e5f7092b4d"],
+    "total_bytes": 84123456789
+  },
+  "errors": [],
+  "error_count": 0,
+  "unreadable_paths": []
+}

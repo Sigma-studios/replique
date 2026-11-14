@@ -1,0 +1,12 @@
+{
+  "kind": "mirror",
+  "schedule": "daily",
+  "expected_interval_secs": 86400,
+  "rules": {
+    "paths": [],
+    "excludes": [],
+    "exclude_caches": false,
+    "mirror_source": "dev_01JCX5B2K9P4Q8R1S6T3U7V0CD",
+    "mirror_path": "/home/sigma/Backups/phone"
+  }
+}

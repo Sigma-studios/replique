@@ -1,0 +1,7 @@
+{
+  "code": "K7QM-2XPA",
+  "device_name": "PC",
+  "kind": "nixos",
+  "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHq9yQx3o3oZ1m8FQ0Uq2J2b6P1o8sRzXq6c3o9gYk1T replique-client@pc",
+  "client_version": "replique-client 0.1.0"
+}

@@ -1,0 +1,14 @@
+{
+  "device_id": "dev_01JCX4M8Q2N7R5T3V9W1Y6Z0AB",
+  "device_name": "PC",
+  "report_token": "rpl_6sR5g4u2YYcjoyYnOkbpBimLJQPI8qahB5kL4lVSOgk",
+  "storage": {
+    "host": "u123456.your-storagebox.de",
+    "port": 23,
+    "username": "u123456-sub1",
+    "repo_path": "/home/restic",
+    "known_hosts": [
+      "[u123456.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs"
+    ]
+  }
+}

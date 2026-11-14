@@ -1,0 +1,10 @@
+[package]
+name = "replique-client"
+description = "Runs restic on a device and reports every run to Réplique"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+replique-proto.workspace = true

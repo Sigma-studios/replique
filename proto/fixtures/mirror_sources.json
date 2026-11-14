@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "device_id": "dev_01JCX5B2K9P4Q8R1S6T3U7V0CD",
+      "device_name": "Téléphone",
+      "storage": {
+        "host": "u123456.your-storagebox.de",
+        "port": 23,
+        "username": "u123456-sub4",
+        "repo_path": "/home/restic"
+      }
+    }
+  ]
+}

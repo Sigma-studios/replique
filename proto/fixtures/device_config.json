@@ -1,0 +1,26 @@
+{
+  "job": "phone",
+  "folders": [
+    { "path": "/storage/emulated/0", "excludes": ["/storage/emulated/0/Movies/Imported"] },
+    {
+      "path": "/storage/emulated/0/Download",
+      "excludes": [],
+      "max_file_size_bytes": 2147483648,
+      "exclude_extensions": ["apk", "iso"]
+    },
+    { "path": "/storage/emulated/0/Documents", "excludes": [], "only_extensions": ["pdf", "odt", "txt"] }
+  ],
+  "excludes": [
+    "/storage/emulated/0/Android/data",
+    "/storage/emulated/0/Android/obb",
+    ".thumbnails",
+    ".trashed-*",
+    ".pending-*",
+    ".cache",
+    "cache",
+    "Cache"
+  ],
+  "conditions": { "unmetered_only": true, "charging_only": true, "min_battery_percent": 30 },
+  "interval_hours": 24,
+  "retention": { "policy": "never-prune" }
+}

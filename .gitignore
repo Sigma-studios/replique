@@ -1,0 +1,9 @@
+/target
+/result*
+.direnv/
+# Android build output (Gradle, the cross-compiled restic and rclone).
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/src/main/jniLibs/

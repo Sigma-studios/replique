@@ -1,0 +1,15 @@
+[package]
+name = "replique-proto"
+description = "The contract between Réplique's server and the devices that report to it"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+chrono.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
