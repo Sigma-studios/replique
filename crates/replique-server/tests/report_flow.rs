@@ -773,9 +773,143 @@ async fn simulated_box_without_hetzner() {
         .await
         .unwrap();
     assert_eq!(reply.storage.username, "local-dev-box");
-    // An expired code says so.
+    // A paired device can get a new code (after a reinstall).
     let (status, location) = browser
         .post(&format!("/devices/{id}/pairing-code"), &[])
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{location}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manual_keys_adoption_and_a_full_box() {
+    // No local root: nothing but the Hetzner mock; keys are installed by hand.
+    let (mock, hetzner_url) = mock_hetzner().await;
+    let secrets = tempfile::tempdir().unwrap();
+    let token_file = secrets.path().join("hetzner-token");
+    std::fs::write(&token_file, MOCK_TOKEN).unwrap();
+    let server = start_with(
+        &format!(
+            "id = {MOCK_BOX}\napi_url = \"{hetzner_url}\"\nhetzner_token_file = \"{}\"\nkey_install = \"manual\"",
+            token_file.display()
+        ),
+        false,
+    )
+    .await;
+    let browser = Browser::login(&server.url).await;
+    let (hetzner, _) = server.app.hetzner().unwrap();
+
+    // The PC's existing sub-account, adopted rather than created.
+    let existing = hetzner
+        .create_subaccount(
+            MOCK_BOX,
+            replique_server::hetzner::NewSubaccount {
+                home_directory: "backups/pc",
+                password: &replique_server::secrets::Secret::new("Existing-pass-123".into()),
+                access_settings: replique_server::hetzner::AccessSettings::ssh_only(false),
+                description: "the PC's",
+            },
+        )
+        .await
+        .unwrap();
+    let (status, location) = browser
+        .post(
+            "/devices",
+            &[
+                ("name", "PC"),
+                ("kind", "nixos"),
+                ("adopt", &existing.username),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{location}");
+    let id = location.trim_start_matches("/devices/").to_string();
+    // Only the twin was created, on the adopted home.
+    let subs = mock.subaccounts();
+    assert_eq!(subs.len(), 2);
+    let twin = subs
+        .iter()
+        .find(|s| s["access_settings"]["readonly"] == true)
+        .unwrap()
+        .clone();
+    assert_eq!(twin["home_directory"], "backups/pc");
+    let twin_user = twin["username"].as_str().unwrap().to_string();
+
+    let code = pairing_code(&browser, &id).await;
+    let (_, reply) = Device::pair(&server.url, &code, DeviceKind::Nixos)
+        .await
+        .unwrap();
+    assert_eq!(reply.storage.username, existing.username);
+    // Manual mode: the page shows the command for the twin (the adopted
+    // sub-account already has its key), with the password to type once.
+    let (_, page) = browser.get(&format!("/devices/{id}")).await;
+    assert!(page.contains("Install the keys by hand"));
+    assert!(page.contains(&format!(
+        "{twin_user}@u1337.your-storagebox.de install-ssh-key"
+    )));
+    assert!(!page.contains(&format!(
+        "{}@u1337.your-storagebox.de install-ssh-key",
+        existing.username
+    )));
+    let resets = |m: &MockHetzner| {
+        m.commands()
+            .into_iter()
+            .filter(|c| c.ends_with("reset_subaccount_password"))
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        resets(&mock).is_empty(),
+        "nothing rotated before the admin confirms"
+    );
+    let (status, location) = browser
+        .post(&format!("/devices/{id}/manual-done"), &[])
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.contains("ok="), "{location}");
+    // Only the twin's password was rotated; the adopted one is left alone.
+    let rotated = resets(&mock);
+    assert_eq!(rotated.len(), 1);
+    assert!(rotated[0].contains(&format!("/subaccounts/{}/", twin["id"])));
+    let (_, page) = browser.get(&format!("/devices/{id}")).await;
+    assert!(!page.contains("Install the keys by hand"));
+
+    // The box at 85%: a warning, then an alert past 95%, then back to normal.
+    *mock.used_bytes.lock().unwrap() = 850_000_000_000;
+    replique_server::measure::refresh_box(&server.app)
+        .await
+        .unwrap();
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    assert!(server.app.store.open_alert("box_warn").unwrap().is_some());
+    let (_, settings) = browser.get("/settings").await;
+    assert!(
+        settings.contains("198 left"),
+        "sub-accounts left on Settings"
+    );
+    *mock.used_bytes.lock().unwrap() = 960_000_000_000;
+    replique_server::measure::refresh_box(&server.app)
+        .await
+        .unwrap();
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    assert!(server.app.store.open_alert("box_warn").unwrap().is_none());
+    let alert = server.app.store.open_alert("box_alert").unwrap().unwrap();
+    assert_eq!(alert.title, "Storage Box 96% full");
+    *mock.used_bytes.lock().unwrap() = 100_000_000_000;
+    replique_server::measure::refresh_box(&server.app)
+        .await
+        .unwrap();
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    assert!(
+        server
+            .app
+            .store
+            .open_alerts()
+            .unwrap()
+            .iter()
+            .all(|a| a.kind != "box_usage")
+    );
 }

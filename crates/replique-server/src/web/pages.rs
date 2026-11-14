@@ -583,7 +583,7 @@ pub async fn device(
             @if !manual.is_empty() {
                 div.card.notice.warn {
                     h3 { "Install the keys by hand" }
-                    p { "Key installation is set to manual. Run each command once (it asks for the password shown), then confirm: Réplique then replaces both passwords with random ones." }
+                    p { "Key installation is set to manual. Run each command once (it asks for the password shown), then confirm: Réplique then replaces those passwords with random ones nobody keeps." }
                     @for step in &manual {
                         div.copy { code { (step.command) } button type="button" data-copy=(step.command) { "Copy" } }
                         p.small { "Password: " code { (step.password.expose()) } }
@@ -609,11 +609,12 @@ pub async fn device(
                 }
                 @if let Some(repo) = &repo {
                     div.actions style="margin-top: 0.6rem" {
-                        @if device.paired_at.is_none() {
-                        } @else if app.unlocks.is_unlocked(&admin.session, &repo.id, idle) {
-                            a.button.primary href={ "/repos/" (repo.id) "/snapshots" } { "Browse snapshots" }
-                        } @else {
-                            a.button href={ "/repos/" (repo.id) "/unlock" } { "Unlock to browse and restore" }
+                        @if device.paired_at.is_some() {
+                            @if app.unlocks.is_unlocked(&admin.session, &repo.id, idle) {
+                                a.button.primary href={ "/repos/" (repo.id) "/snapshots" } { "Browse snapshots" }
+                            } @else {
+                                a.button href={ "/repos/" (repo.id) "/unlock" } { "Unlock to browse and restore" }
+                            }
                         }
                         @if device.kind == DeviceKind::Android { a.button href={ "/devices/" (device.id) "/rules" } { "Phone rules" } }
                     }
