@@ -6,8 +6,8 @@
 //! Needs a server: `REPLIQUE_TEST_SFTP=127.0.0.1:2222` with a user `dev`
 //! (password in `REPLIQUE_TEST_SFTP_PASSWORD`, default `DevPass-1234`) that
 //! has a shell and an `install-ssh-key` command appending stdin to its
-//! `authorized_keys`. docs/server.md shows the container used. Skipped when
-//! the variable is unset.
+//! `authorized_keys`; `tests/sftp-server.sh` sets one up in an Alpine
+//! container. Skipped when the variable is unset.
 
 mod common;
 
