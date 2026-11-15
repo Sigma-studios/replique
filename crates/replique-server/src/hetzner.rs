@@ -272,6 +272,25 @@ impl Hetzner {
         Ok(w.subaccounts)
     }
 
+    /// The folders directly inside `path` (relative to the box's root; empty
+    /// for the root). Hetzner answers a path that does not exist with a 500, so
+    /// callers walk down from a folder they know exists.
+    pub async fn folders(&self, box_id: u64, path: &str) -> anyhow::Result<Vec<String>> {
+        #[derive(Deserialize)]
+        struct Wrapper {
+            folders: Vec<String>,
+        }
+        let path = path.trim_matches('/');
+        let url = if path.is_empty() {
+            format!("/storage_boxes/{box_id}/folders")
+        } else {
+            // Owner and device slugs are `[a-z0-9-]`: nothing to escape.
+            format!("/storage_boxes/{box_id}/folders?path={path}")
+        };
+        let w: Wrapper = self.call(Method::GET, &url, None).await?;
+        Ok(w.folders)
+    }
+
     pub async fn subaccount(&self, box_id: u64, id: u64) -> anyhow::Result<Subaccount> {
         #[derive(Deserialize)]
         struct Wrapper {

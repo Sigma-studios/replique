@@ -243,8 +243,13 @@ impl App {
         let conn = self.ssh_connect(endpoint, Auth::Password(password)).await?;
         let sftp = conn.sftp().await?;
         // The sub-account is chrooted to the repository's home, so `restic`
-        // here can only be that repository.
-        let result = ssh::remove_tree(&sftp, replique_proto::REPO_DIR).await;
+        // here can only be that repository. Its `.ssh` goes too: the folder
+        // outlives the sub-account (Hetzner's API cannot delete folders), and a
+        // stale key there would open whatever sub-account is given it next.
+        let mut result = ssh::remove_tree(&sftp, replique_proto::REPO_DIR).await;
+        if result.is_ok() {
+            result = ssh::remove_tree(&sftp, ".ssh").await;
+        }
         let _ = sftp.close().await;
         conn.close().await;
         result

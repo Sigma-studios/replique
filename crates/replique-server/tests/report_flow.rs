@@ -398,12 +398,13 @@ async fn device_added_paired_and_reporting() {
         .await
         .unwrap();
     assert_eq!(reply.device_name, "Téléphone");
-    let homes: Vec<String> = mock
+    let mut homes: Vec<String> = mock
         .subaccounts()
         .iter()
         .filter_map(|s| s["home_directory"].as_str().map(String::from))
         .filter(|h| h.starts_with("replique/sigma/telephone"))
         .collect();
+    homes.sort();
     assert_eq!(
         homes,
         [
@@ -690,6 +691,19 @@ async fn device_added_paired_and_reporting() {
             .join("replique/sigma/telephone")
             .exists(),
         "data kept"
+    );
+    // A device added later under the same name gets a home of its own: the
+    // kept folder may hold the old device's backups and keys.
+    let (status, location) = browser
+        .post("/devices", &[("name", "Téléphone"), ("kind", "android")])
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER, "{location}");
+    assert!(
+        mock.subaccounts()
+            .iter()
+            .any(|s| s["home_directory"] == "replique/sigma/telephone-2"),
+        "{:?}",
+        mock.subaccounts()
     );
 
     // Forms without the CSRF token are refused.

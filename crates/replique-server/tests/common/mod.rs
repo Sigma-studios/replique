@@ -278,6 +278,9 @@ pub struct MockHetzner {
     pub used_bytes: Mutex<u64>,
     /// Make the next action of this command fail.
     pub fail_command: Mutex<Option<String>>,
+    /// Every folder ever made a home. Like the real box, folders outlive the
+    /// sub-accounts living in them.
+    folders: Mutex<std::collections::BTreeSet<String>>,
 }
 
 pub const MOCK_TOKEN: &str = "test-token";
@@ -368,6 +371,53 @@ async fn get_box(
     axum::Json(b).into_response()
 }
 
+#[derive(serde::Deserialize)]
+struct FoldersQuery {
+    path: Option<String>,
+}
+
+/// `GET /storage_boxes/{id}/folders`, with the real box's habit of answering a
+/// missing path with a 500.
+async fn list_folders(
+    State(m): State<Mock>,
+    headers: HeaderMap,
+    AxPath(id): AxPath<u64>,
+    axum::extract::Query(q): axum::extract::Query<FoldersQuery>,
+) -> axum::response::Response {
+    if let Err(r) = authorized(&headers) {
+        return r;
+    }
+    let path = q.path.unwrap_or_default().trim_matches('/').to_string();
+    m.record(
+        "GET",
+        format!("/storage_boxes/{id}/folders?path={path}"),
+        Value::Null,
+    );
+    let known = m.folders.lock().unwrap().clone();
+    let prefix = if path.is_empty() {
+        String::new()
+    } else {
+        format!("{path}/")
+    };
+    let exists = path.is_empty() || known.iter().any(|f| *f == path || f.starts_with(&prefix));
+    if !exists {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            axum::Json(json!({"error": {"code": "server_error", "message": "internal server error", "details": {}}})),
+        )
+            .into_response();
+    }
+    let mut inside: Vec<String> = known
+        .iter()
+        .filter_map(|f| f.strip_prefix(&prefix))
+        .filter_map(|rest| rest.split('/').next())
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    inside.dedup();
+    axum::Json(json!({ "folders": inside })).into_response()
+}
+
 async fn list_subs(
     State(m): State<Mock>,
     headers: HeaderMap,
@@ -413,6 +463,10 @@ async fn create_sub(
     sub["username"] = json!(format!("u1337-sub{sid}"));
     sub["server"] = json!(format!("u1337-sub{sid}.your-storagebox.de"));
     sub["home_directory"] = json!(home);
+    m.folders
+        .lock()
+        .unwrap()
+        .insert(home.trim_matches('/').to_string());
     sub["access_settings"] = body["access_settings"].clone();
     sub["description"] = body["description"].clone();
     m.subs.lock().unwrap().insert(sid, sub);
@@ -543,6 +597,7 @@ pub async fn mock_hetzner() -> (Mock, String) {
     let mock = Mock::default();
     let router = Router::new()
         .route("/storage_boxes/{id}", get(get_box))
+        .route("/storage_boxes/{id}/folders", get(list_folders))
         .route(
             "/storage_boxes/{id}/subaccounts",
             get(list_subs).post(create_sub),

@@ -90,9 +90,17 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
         bail!("Give the device a name of 1 to 64 characters.");
     }
     let base = replique_proto::slugify(&name);
+    // A home left on the box by a removed device (its data kept, or its
+    // folder emptied) must not be reused: it may still hold that device's
+    // backups or keys.
+    let on_box = if new.adopt.is_none() && !simulated(app) {
+        existing_device_folders(app).await?
+    } else {
+        Vec::new()
+    };
     let mut slug = base.clone();
     let mut n = 2;
-    while app.store.slug_taken(&app.owner.id, &slug)? {
+    while app.store.slug_taken(&app.owner.id, &slug)? || on_box.contains(&slug) {
         slug = format!("{base}-{n}");
         n += 1;
     }
@@ -232,6 +240,33 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
     tracing::info!(device = %name, repo = %repo.username, adopted = repo.adopted, "device added");
     app.hub.publish(Event::Devices);
     Ok(device_id)
+}
+
+/// The device folders under `replique/<owner>` on the box. Hetzner fails on a
+/// path that does not exist, so this walks down one level at a time.
+async fn existing_device_folders(app: &App) -> anyhow::Result<Vec<String>> {
+    let (hetzner, box_id) = app.hetzner()?;
+    let owner_home = replique_proto::sub_account_home(&app.owner.slug, "");
+    let owner_home = owner_home.trim_end_matches('/');
+    let mut path = String::new();
+    for part in owner_home.split('/') {
+        let inside = hetzner
+            .folders(box_id, &path)
+            .await
+            .context("listing folders on the box")?;
+        if !inside.iter().any(|f| f == part) {
+            return Ok(Vec::new());
+        }
+        path = if path.is_empty() {
+            part.to_string()
+        } else {
+            format!("{path}/{part}")
+        };
+    }
+    hetzner
+        .folders(box_id, &path)
+        .await
+        .context("listing folders on the box")
 }
 
 fn insert_code(app: &App, device_id: &str, secrets: &PairingSecrets) -> anyhow::Result<String> {
@@ -507,6 +542,11 @@ pub async fn remove_device(
             }
         } else {
             let (hetzner, box_id) = app.hetzner()?;
+            // The twin first: its home is the repository folder, which the box
+            // keeps while a sub-account still lives in it.
+            if let Some(id) = repo.twin_subaccount_id {
+                not_found_is_ok(hetzner.delete_subaccount(box_id, id as u64).await)?;
+            }
             if delete_data && let Some(id) = repo.subaccount_id {
                 // Nobody knows the sub-account's password: set one for this.
                 let password = secrets::new_box_password();
@@ -521,9 +561,6 @@ pub async fn remove_device(
                 app.delete_repository_data(&endpoint, &repo.home_directory, &password)
                     .await
                     .context("deleting the repository's files")?;
-            }
-            if let Some(id) = repo.twin_subaccount_id {
-                not_found_is_ok(hetzner.delete_subaccount(box_id, id as u64).await)?;
             }
             if let Some(id) = repo.subaccount_id {
                 not_found_is_ok(hetzner.delete_subaccount(box_id, id as u64).await)?;
