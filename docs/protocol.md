@@ -271,7 +271,10 @@ counts what it read, unchanged files included, so it is no upload measure.
 * `summary`: restic's backup `summary` message, field for field (backup runs).
 * `prune`, `check`, `mirror`: what those runs found (see the `run_finish_*.json`
   fixtures). A check lists the snapshot ids it covered; a mirror lists the
-  snapshot ids present in its copy.
+  snapshot ids present in its copy, `hash_mismatches` (its copy is broken: the
+  run fails) and `source_mismatches` (files still wrong after a fresh download,
+  so wrong on the source; left out of the copy, the run still succeeds; absent
+  from older clients, read as none).
 * `errors`: the first 50 of restic's `error` messages (`message`, `during`,
   `item`); `error_count` is the total.
 * `unreadable_paths`: the `item`s restic could not read (exit 3).
@@ -309,7 +312,10 @@ Replies with the newest snapshot that is both
 * **verified on Hetzner**: a `check` run of this device's repository finished
   with `success` after the snapshot was made and listed its id, and
 * **present in a mirror**: a successful `mirror` run of this repository reported
-  its id in `snapshot_ids`.
+  its id in `snapshot_ids`, with no `hash_mismatches`. If it reported
+  `source_mismatches`, it counts only once a check of this repository passed
+  after the last of those files was first seen (a truncated pack in use fails
+  that check, so a pass means they are unused leftovers).
 
 ```json
 {

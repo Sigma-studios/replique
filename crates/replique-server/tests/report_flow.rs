@@ -580,6 +580,7 @@ async fn device_added_paired_and_reporting() {
         files_removed: 0,
         files_verified: 10,
         hash_mismatches: vec![],
+        source_mismatches: vec![],
         snapshot_ids: vec![phone_snapshot.clone()],
         total_bytes: Some(1000),
     });
@@ -605,6 +606,179 @@ async fn device_added_paired_and_reporting() {
         .await
         .unwrap();
     assert!(later.snapshot.is_none());
+
+    // ---- a file broken on the phone's side (an upload cut short): the mirror
+    // succeeds and reports it; that copy counts for "free up space" only once
+    // the phone's own check passed after the file appeared.
+    let broken_pack = format!("data/ab/{}", "ab".repeat(32));
+    let newer = "b4d2".repeat(16);
+    // An hour ahead, so every run reported earlier in this test (the phone's
+    // first check included) comes strictly before this scenario.
+    let at = chrono::Utc::now() + chrono::Duration::hours(1);
+    let minutes = chrono::Duration::minutes;
+    let b2 = phone
+        .start("phone", RunKind::Backup, &uuid(), at - minutes(20))
+        .await;
+    let mut done2 = finish(RunStatus::Success, 0);
+    done2.finished_at = at - minutes(19);
+    done2.summary = Some(BackupSummary {
+        snapshot_id: Some(newer.clone()),
+        backup_start: Some(at - minutes(20)),
+        ..BackupSummary::default()
+    });
+    assert_eq!(phone.finish(&b2, &done2).await, StatusCode::OK);
+    let check_of = |ids: Vec<String>, at| {
+        let mut f = finish(RunStatus::Success, 0);
+        f.finished_at = at;
+        f.check = Some(CheckSummary {
+            read_data_subset: None,
+            num_errors: 0,
+            snapshot_ids: ids,
+        });
+        f
+    };
+    let c2 = phone
+        .start("phone", RunKind::Check, &uuid(), at - minutes(15))
+        .await;
+    let both = vec![phone_snapshot.clone(), newer.clone()];
+    assert_eq!(
+        phone
+            .finish(&c2, &check_of(both.clone(), at - minutes(14)))
+            .await,
+        StatusCode::OK
+    );
+    let mirror_of = |broken: Vec<String>, copies: Vec<String>, status, code, at| {
+        let mut f = finish(status, code);
+        f.finished_at = at;
+        f.mirror = Some(MirrorSummary {
+            source_device_id: phone.id.clone(),
+            files_copied: 3,
+            bytes_copied: 300,
+            files_removed: 0,
+            files_verified: 3,
+            hash_mismatches: copies,
+            source_mismatches: broken,
+            snapshot_ids: vec![phone_snapshot.clone(), newer.clone()],
+            total_bytes: Some(1300),
+        });
+        f
+    };
+    let m2 = pc
+        .start("phone-mirror", RunKind::Mirror, &uuid(), at - minutes(10))
+        .await;
+    let report = mirror_of(
+        vec![broken_pack.clone()],
+        vec![],
+        RunStatus::Success,
+        0,
+        at - minutes(9),
+    );
+    assert_eq!(pc.finish(&m2, &report).await, StatusCode::OK);
+    let safe_now = || async {
+        phone
+            .get(&paths::safe_to_delete(&phone.id))
+            .await
+            .json::<SafeToDelete>()
+            .await
+            .unwrap()
+            .snapshot
+            .map(|s| s.snapshot_id)
+    };
+    assert_eq!(
+        safe_now().await.as_deref(),
+        Some(phone_snapshot.as_str()),
+        "the newer snapshot waits for a check after the broken file"
+    );
+    let titles = || {
+        server
+            .app
+            .store
+            .open_alerts()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.title)
+            .collect::<Vec<_>>()
+    };
+    let open = titles();
+    assert!(
+        open.iter()
+            .any(|t| t.contains("broken on Téléphone's side")),
+        "{open:?}"
+    );
+    assert!(
+        !open
+            .iter()
+            .any(|t| t.contains("integrity") || t.contains("not checked since")),
+        "{open:?}"
+    );
+    let (_, pc_page) = browser.get(&format!("/devices/{pc_id}")).await;
+    assert!(
+        pc_page.contains("broken on Téléphone"),
+        "the mirror's card explains it"
+    );
+    assert!(pc_page.contains("Not settled yet"));
+
+    // The phone's next check passes: nothing uses the broken file, the copy counts.
+    let c3 = phone
+        .start("phone", RunKind::Check, &uuid(), at - minutes(2))
+        .await;
+    assert_eq!(
+        phone
+            .finish(&c3, &check_of(both.clone(), at - minutes(1)))
+            .await,
+        StatusCode::OK
+    );
+    assert_eq!(safe_now().await.as_deref(), Some(newer.as_str()));
+    let open = titles();
+    assert!(
+        open.iter()
+            .any(|t| t.contains("broken on Téléphone's side")),
+        "{open:?}"
+    );
+    assert!(
+        !open.iter().any(|t| t.contains("not checked since")),
+        "{open:?}"
+    );
+    let (_, pc_page) = browser.get(&format!("/devices/{pc_id}")).await;
+    assert!(pc_page.contains("Harmless"));
+
+    // A clean mirror clears the warning.
+    let m3 = pc
+        .start("phone-mirror", RunKind::Mirror, &uuid(), at - minutes(1))
+        .await;
+    assert_eq!(
+        pc.finish(&m3, &mirror_of(vec![], vec![], RunStatus::Success, 0, at))
+            .await,
+        StatusCode::OK
+    );
+    assert!(
+        !titles().iter().any(|t| t.contains("broken on")),
+        "{:?}",
+        titles()
+    );
+
+    // A broken copy is still an integrity problem, as before.
+    let m4 = pc.start("phone-mirror", RunKind::Mirror, &uuid(), at).await;
+    let copy_broken = mirror_of(vec![], vec![broken_pack.clone()], RunStatus::Failed, 1, at);
+    assert_eq!(pc.finish(&m4, &copy_broken).await, StatusCode::OK);
+    assert!(
+        titles()
+            .iter()
+            .any(|t| t.contains("integrity check failed")),
+        "{:?}",
+        titles()
+    );
+    let m5 = pc.start("phone-mirror", RunKind::Mirror, &uuid(), at).await;
+    assert_eq!(
+        pc.finish(&m5, &mirror_of(vec![], vec![], RunStatus::Success, 0, at))
+            .await,
+        StatusCode::OK
+    );
+    assert!(
+        !titles().iter().any(|t| t.contains("integrity")),
+        "{:?}",
+        titles()
+    );
 
     // ---- measurements and drift
     replique_server::measure::measure_all(&server.app).await;
@@ -1029,5 +1203,140 @@ async fn manual_keys_adoption_and_a_full_box() {
             .unwrap()
             .iter()
             .all(|a| a.kind != "box_usage")
+    );
+}
+
+/// Files broken on the source with no passing check of it since they appeared:
+/// once the source has had time for one, it is an integrity alert, and the
+/// mirror does not count for "free up space".
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn source_breakage_unchecked_escalates() {
+    let (_mock, hetzner_url) = mock_hetzner().await;
+    let secrets = tempfile::tempdir().unwrap();
+    let token_file = secrets.path().join("hetzner-token");
+    std::fs::write(&token_file, MOCK_TOKEN).unwrap();
+    let server = start(&format!(
+        "id = {MOCK_BOX}\napi_url = \"{hetzner_url}\"\nhetzner_token_file = \"{}\"",
+        token_file.display()
+    ))
+    .await;
+    let browser = Browser::login(&server.url).await;
+    let add = |name: &'static str, kind: &'static str| {
+        let browser = &browser;
+        async move {
+            let (_, location) = browser
+                .post("/devices", &[("name", name), ("kind", kind)])
+                .await;
+            location.trim_start_matches("/devices/").to_string()
+        }
+    };
+    let phone_id = add("Phone", "android").await;
+    let code = pairing_code(&browser, &phone_id).await;
+    let (phone, _) = Device::pair(&server.url, &code, DeviceKind::Android)
+        .await
+        .unwrap();
+    let pc_id = add("PC", "nixos").await;
+    let code = pairing_code(&browser, &pc_id).await;
+    let (pc, _) = Device::pair(&server.url, &code, DeviceKind::Nixos)
+        .await
+        .unwrap();
+    let (status, _) = browser
+        .post(
+            &format!("/devices/{pc_id}/mirrors"),
+            &[("source", &phone_id)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    // Five days ago: a backup and a passing check. Nothing since.
+    let now = chrono::Utc::now();
+    let days = chrono::Duration::days;
+    let snapshot = "c0de".repeat(16);
+    let b = phone
+        .start("phone", RunKind::Backup, &uuid(), now - days(5))
+        .await;
+    let mut done = finish(RunStatus::Success, 0);
+    done.finished_at = now - days(5);
+    done.summary = Some(BackupSummary {
+        snapshot_id: Some(snapshot.clone()),
+        backup_start: Some(now - days(5)),
+        ..BackupSummary::default()
+    });
+    assert_eq!(phone.finish(&b, &done).await, StatusCode::OK);
+    let c = phone
+        .start("phone", RunKind::Check, &uuid(), now - days(5))
+        .await;
+    let mut checked = finish(RunStatus::Success, 0);
+    checked.finished_at = now - days(5);
+    checked.check = Some(CheckSummary {
+        read_data_subset: None,
+        num_errors: 0,
+        snapshot_ids: vec![snapshot.clone()],
+    });
+    assert_eq!(phone.finish(&c, &checked).await, StatusCode::OK);
+
+    // An older client's report, without the new field, is still read.
+    let m0 = pc
+        .start("phone-mirror", RunKind::Mirror, &uuid(), now - days(4))
+        .await;
+    let old_style = serde_json::json!({
+        "status": "success", "exit_code": 0,
+        "finished_at": (now - days(4)).to_rfc3339(),
+        "mirror": { "source_device_id": phone.id, "hash_mismatches": [], "snapshot_ids": [snapshot] },
+        "errors": [], "error_count": 0, "unreadable_paths": []
+    });
+    let r = pc
+        .send(reqwest::Method::POST, &paths::run_finish(&m0), &old_style)
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+
+    // Three days ago and now: one file broken on the phone's side.
+    let broken = vec![format!("data/cd/{}", "cd".repeat(32))];
+    for (i, when) in [now - days(3), now].into_iter().enumerate() {
+        let m = pc
+            .start("phone-mirror", RunKind::Mirror, &format!("m{i}"), when)
+            .await;
+        let mut f = finish(RunStatus::Success, 0);
+        f.finished_at = when;
+        f.mirror = Some(MirrorSummary {
+            source_device_id: phone.id.clone(),
+            files_copied: 0,
+            bytes_copied: 0,
+            files_removed: 0,
+            files_verified: 0,
+            hash_mismatches: vec![],
+            source_mismatches: broken.clone(),
+            snapshot_ids: vec![snapshot.clone()],
+            total_bytes: None,
+        });
+        assert_eq!(pc.finish(&m, &f).await, StatusCode::OK);
+    }
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    let open: Vec<String> = server
+        .app
+        .store
+        .open_alerts()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect();
+    assert!(
+        open.iter()
+            .any(|t| t.contains("not checked since files broke there")),
+        "{open:?}"
+    );
+    // The old-style run, before the breakage, still counts: the snapshot is
+    // safe through it. Without it, nothing would be.
+    let safe: SafeToDelete = phone
+        .get(&paths::safe_to_delete(&phone.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        safe.snapshot.map(|s| s.mirrored_at.timestamp()),
+        Some((now - days(4)).timestamp())
     );
 }

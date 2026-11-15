@@ -467,6 +467,8 @@ data class MirrorSummary(
     @SerialName("files_removed") val filesRemoved: Long = 0,
     @SerialName("files_verified") val filesVerified: Long = 0,
     @SerialName("hash_mismatches") val hashMismatches: List<String> = emptyList(),
+    /** Files wrong on the source itself (a fresh copy still did not match), left out of the copy. */
+    @SerialName("source_mismatches") val sourceMismatches: List<String> = emptyList(),
     @SerialName("snapshot_ids") val snapshotIds: List<String> = emptyList(),
     @SerialName("total_bytes") val totalBytes: Long? = null,
 )

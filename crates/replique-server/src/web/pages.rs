@@ -556,6 +556,50 @@ pub async fn pairing_fragment(
     Ok(Html(pairing_block(&app, &ctx, &device)?.into_string()).into_response())
 }
 
+/// On a mirror job's card: files its latest run found broken on the source,
+/// what they probably are, and what settles them.
+fn source_broken_note(app: &App, job: &Job) -> Markup {
+    let latest = app
+        .store
+        .runs_of_job(job.id, 50)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|r| r.finish.as_ref().is_some_and(|f| f.mirror.is_some()));
+    let Some(found) = latest.and_then(|r| crate::mirrors::of_run(app, &r).ok().flatten()) else {
+        return html! {};
+    };
+    let source = app
+        .store
+        .device(&found.source_device_id)
+        .ok()
+        .flatten()
+        .map(|d| d.name)
+        .unwrap_or_else(|| "the source".into());
+    let vouched = crate::mirrors::vouched_at(app, &found.source_device_id, found.since)
+        .ok()
+        .flatten();
+    html! {
+        div.notice {
+            p style="margin: 0 0 0.3rem" {
+                strong { (alerts::plural(found.files.len() as u64, "file")) " broken on " (source) "'s side" }
+                ", left out of this copy. A fresh download of each is still not what its name says: the file on the box is wrong, usually a pack an interrupted upload left behind, which restic never indexed."
+            }
+            p.small style="margin: 0 0 0.3rem" {
+                @if let Some(at) = vouched {
+                    span.status.good { "Harmless" } " " (source) "'s check passed " (fmt::ago(at)) ", after they appeared: nothing uses them."
+                } @else {
+                    span.status.warning { "Not settled yet" } " Seen since " (fmt::datetime(found.since)) ". " (source) "'s next passing check makes them harmless (a truncated pack in use would fail it); until then this copy does not count for “free up space”."
+                }
+                " A prune on " (source) " would remove them."
+            }
+            details.small {
+                summary { "Files" }
+                ul.mono style="margin: 0.3rem 0 0; padding-left: 1.2rem" { @for f in &found.files { li { (f) } } }
+            }
+        }
+    }
+}
+
 fn rules_view(job: &Job) -> Markup {
     let r = &job.rules;
     html! {
@@ -615,6 +659,7 @@ fn device_live(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup> 
                             }
                         }
                         (rules_view(&v.job))
+                        @if v.job.kind == JobKind::Mirror { (source_broken_note(app, &v.job)) }
                         details {
                             summary.small { "Silent-job alert" }
                             form.row method="post" action={ "/devices/" (device.id) "/jobs/" (v.job.id) "/interval" } style="margin-top: 0.4rem" {
@@ -668,7 +713,7 @@ fn run_details(r: &Run) -> Markup {
         }
         @if let Some(p) = &f.prune { div.small.muted { (p.policy) ": " (p.snapshots_removed) " snapshots removed, " (p.snapshots_tagged_keep) " kept for deleted files" } }
         @if let Some(c) = &f.check { div.small.muted { "checked " (c.read_data_subset.as_deref().unwrap_or("structure")) ", " (c.num_errors) " errors" } }
-        @if let Some(m) = &f.mirror { div.small.muted { (m.files_copied) " files copied, " (m.files_verified) " verified" @if !m.hash_mismatches.is_empty() { ", " strong { (m.hash_mismatches.len()) " mismatches" } } } }
+        @if let Some(m) = &f.mirror { div.small.muted { (m.files_copied) " files copied, " (m.files_verified) " verified" @if !m.hash_mismatches.is_empty() { ", " strong { (m.hash_mismatches.len()) " mismatches" } } @if !m.source_mismatches.is_empty() { ", " span title="Still wrong after a fresh copy: wrong on the source itself, left out of this copy. See the job's card." { (m.source_mismatches.len()) " broken on the source" } } } }
         @if !f.errors.is_empty() || !f.unreadable_paths.is_empty() {
             details {
                 summary.small { (alerts::plural(f.error_count.max(f.errors.len() as u64), "error")) }

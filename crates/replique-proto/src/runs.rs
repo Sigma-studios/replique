@@ -276,9 +276,18 @@ pub struct MirrorSummary {
     pub files_removed: u64,
     #[serde(default)]
     pub files_verified: u64,
-    /// Repository paths whose content did not match their name.
+    /// Files of the copy whose content did not match their name, and that a
+    /// fresh download could not settle: the copy is broken. These fail the run.
     #[serde(default)]
     pub hash_mismatches: Vec<String>,
+    /// Files wrong on the source itself: a fresh download of each still did
+    /// not match its name. Usually a pack an interrupted upload left behind
+    /// (restic indexes a pack only once its upload completed), which nothing
+    /// uses; a passing check of the source's repository finished after they
+    /// appeared settles that. They are left out of the copy and do not fail the
+    /// run. Empty from older clients.
+    #[serde(default)]
+    pub source_mismatches: Vec<String>,
     /// The snapshot files present in the copy after this run (their names are
     /// the snapshot ids). The server uses them for "present in the PC mirror".
     #[serde(default)]

@@ -116,6 +116,12 @@ pub fn detail(f: &FinishRun) -> String {
             m.hash_mismatches.len(),
             m.snapshot_ids.len()
         ));
+        if !m.source_mismatches.is_empty() {
+            parts.push(format!(
+                "{} broken on the source (left out)",
+                m.source_mismatches.len()
+            ));
+        }
     }
     if f.error_count > 0 {
         parts.push(format!("{} errors", f.error_count));

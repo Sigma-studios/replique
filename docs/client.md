@@ -217,11 +217,26 @@ Each run:
    deleted from the copy (with `--immutable` rclone would refuse to replace
    them), so this copy fetches them again whole.
 2. Every new file under `data/`, `index/` and `snapshots/` is hashed: restic names
-   them by the SHA-256 of their contents, so a mismatch is corruption, found
-   without the password. Verified files are remembered and not hashed again.
-3. Reports the files copied, removed and verified, the mismatches, the snapshot
-   ids present in the copy (what "safe to delete" on the phone relies on) and
-   the copy's size. A mismatch fails the run.
+   them by the SHA-256 of their contents, so a mismatch is found without the
+   password. Verified files are remembered and not hashed again.
+3. A file that does not match its name is downloaded once more, in the same
+   run, which tells the two kinds of mismatch apart:
+   * **broken copy**: the fresh download matches. The local file was damaged;
+     it is replaced, and nothing is reported. A file that cannot be downloaded
+     again stays a broken copy (`hash_mismatches`), which fails the run.
+   * **broken on the source**: the fresh download is still wrong, so the file
+     on the box is wrong (`source_mismatches`). Usually a pack an interrupted
+     upload left behind (the phone killed mid-backup): restic indexes a pack only
+     once its upload completed, so nothing uses it, and the phone never prunes
+     it. The file is deleted from the copy and left out of later runs
+     (`<job>.source-broken.json` and `<job>.left-out` in the mirror state),
+     without being downloaded or hashed again, until its size or modification
+     time changes on the source (it is then checked afresh) or it disappears
+     there (a prune). This does not fail the run: whether the file matters is
+     the source's own check to say (see the server's alerts).
+4. Reports the files copied, removed and verified, both kinds of mismatch, the
+   snapshot ids present in the copy (what "safe to delete" on the phone relies
+   on) and the copy's size.
 
 The copy is a normal restic repository:
 `replique-phone snapshots` (or `restic -r <mirrorPath> --no-lock …`) with the

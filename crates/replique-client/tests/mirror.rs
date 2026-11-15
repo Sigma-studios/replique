@@ -103,6 +103,10 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
             .unwrap()
     });
     assert_eq!(healed.status, RunStatus::Success);
+    assert!(
+        healed.mirror.clone().unwrap().source_mismatches.is_empty(),
+        "a copy broken only here is repaired, never blamed on the source"
+    );
 
     // A second snapshot on the phone, and the first one forgotten there: the
     // copy follows, and keeps the forgotten snapshot's file aside.
@@ -129,21 +133,74 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
     assert_eq!(stamps.len(), 1);
     assert!(stamps[0].path().join("snapshots").join(&old).is_file());
 
-    // A file on the source that does not match its name is caught.
+    // A file wrong on the source itself (an upload cut short, which restic
+    // never indexed): a fresh copy is still wrong, so it is reported as broken
+    // on the source and left out of the copy, and the run succeeds.
     let bogus = format!("{:x}", Sha256::digest(b"what the name promises"));
-    fs::write(phone.join("index").join(&bogus), b"something else").unwrap();
-    assert_eq!(c.run(&["run", "phone"]).status.code(), Some(1));
+    let bogus_rel = format!("index/{bogus}");
+    let on_phone = phone.join("index").join(&bogus);
+    fs::write(&on_phone, b"something else").unwrap();
+    assert_eq!(c.run(&["run", "phone"]).status.code(), Some(0));
     let third = mock.with(|r| r.runs_of(RunKind::Mirror)[3].finish.clone().unwrap());
-    assert_eq!(third.status, RunStatus::Failed);
-    assert_eq!(
-        third.mirror.unwrap().hash_mismatches,
-        [format!("index/{bogus}")]
+    assert_eq!(third.status, RunStatus::Success);
+    let m3 = third.mirror.clone().unwrap();
+    assert!(m3.hash_mismatches.is_empty());
+    assert_eq!(m3.source_mismatches, std::slice::from_ref(&bogus_rel));
+    assert!(
+        !copy.join(&bogus_rel).exists(),
+        "a file known bad is not kept"
     );
-    assert!(third.message.unwrap().contains("do not match their name"));
+    assert!(third.message.unwrap().contains("broken on the source"));
+
+    // The next run still reports it, without downloading or hashing it again.
+    assert_eq!(c.run(&["run", "phone"]).status.code(), Some(0));
+    let fourth = mock.with(|r| r.runs_of(RunKind::Mirror)[4].finish.clone().unwrap());
+    let m4 = fourth.mirror.unwrap();
+    assert_eq!(m4.source_mismatches, std::slice::from_ref(&bogus_rel));
+    assert_eq!(m4.files_verified, 0, "nothing hashed");
+    assert!(!copy.join(&bogus_rel).exists(), "not downloaded");
+
+    // Changed on the source (here: repaired, another size): fetched, checked,
+    // and off the list.
+    fs::write(&on_phone, b"what the name promises").unwrap();
+    assert_eq!(c.run(&["run", "phone"]).status.code(), Some(0));
+    let fifth = mock.with(|r| r.runs_of(RunKind::Mirror)[5].finish.clone().unwrap());
+    let m5 = fifth.mirror.unwrap();
+    assert!(m5.source_mismatches.is_empty(), "{m5:?}");
+    assert!(copy.join(&bogus_rel).is_file());
+    assert_eq!(fifth.status, RunStatus::Success);
 
     let status = String::from_utf8_lossy(&c.run(&["status"]).stdout).into_owned();
     assert!(status.contains("mirror"), "{status}");
-    assert!(status.contains("failed"), "{status}");
+    assert!(status.contains("success"), "{status}");
+}
+
+#[test]
+fn an_rclone_failure_still_fails_the_mirror() {
+    let mock = Mock::start();
+    let c = Client::new();
+    c.pair(&mock);
+    let root = c.root();
+    let phone = root.join("phone-repo");
+    restic(&phone, PHONE_PASSWORD, &["init", "--quiet"]);
+    c.write_config(json!({
+        "server": mock.url,
+        "jobs": { "phone": {
+            "kind": "mirror",
+            "mirror_source": "dev_PHONE",
+            "mirror_path": root.join("copy"),
+            "mirror_from": phone,
+            "mirror_min_age": "0",
+        }}
+    }));
+    let out = c
+        .cmd(&["mirror", "phone"])
+        .env("REPLIQUE_RCLONE", "false")
+        .output()
+        .unwrap();
+    assert_ne!(out.status.code(), Some(0));
+    let f = mock.with(|r| r.runs_of(RunKind::Mirror)[0].finish.clone().unwrap());
+    assert_eq!(f.status, RunStatus::Failed);
 }
 
 #[test]

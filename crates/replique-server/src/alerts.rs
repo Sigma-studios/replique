@@ -196,6 +196,102 @@ pub async fn on_run_started(app: &Arc<App>, _device: &Device, job_id: i64) {
     clear(app, &format!("silent:{job_id}")).await;
 }
 
+/// What a mirror job's latest run says about files broken on its source.
+///
+/// None: the warning and its escalation clear. Some: a warning (the mirror
+/// itself is fine; the files are a fact about the source). It becomes an
+/// integrity alert only when the source has had time for a check and none
+/// passed since the files appeared: a pack in use that is truncated fails the
+/// source's plain check, so a passing one means none of them is in use (see
+/// `mirrors`).
+pub async fn review_source_mismatches(app: &Arc<App>, job_id: i64) {
+    let broken_key = format!("source_broken:{job_id}");
+    let unverified_key = format!("source_unverified:{job_id}");
+    let Ok(Some(job)) = app.store.job(job_id) else {
+        return;
+    };
+    let Ok(Some(device)) = app.store.device(&job.device_id) else {
+        return;
+    };
+    let latest = app
+        .store
+        .runs_of_job(job_id, 50)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|r| r.finish.as_ref().is_some_and(|f| f.mirror.is_some()));
+    let Some(latest) = latest else { return };
+    let found = match crate::mirrors::of_run(app, &latest) {
+        Ok(f) => f,
+        Err(e) => {
+            tracing::error!("reading a mirror's history: {e:#}");
+            return;
+        }
+    };
+    let Some(found) = found else {
+        clear(app, &broken_key).await;
+        clear(app, &unverified_key).await;
+        return;
+    };
+    let source = app
+        .store
+        .device(&found.source_device_id)
+        .ok()
+        .flatten()
+        .map(|d| d.name)
+        .unwrap_or_else(|| "the source".into());
+    let n = found.files.len() as u64;
+    let mut list = found
+        .files
+        .iter()
+        .take(10)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n");
+    if found.files.len() > 10 {
+        list.push_str(&format!("\n… and {} more", found.files.len() - 10));
+    }
+    raise(
+        app,
+        Raise {
+            key: broken_key,
+            kind: "source_broken",
+            severity: WARNING,
+            title: format!("{}: {} broken on {source}'s side", label(&device, &job), plural(n, "file")),
+            detail: format!(
+                "{} on {source}'s side {} match their name, probably left over from an interrupted upload; they are left out of this copy. Nothing uses them if {source}'s check passed after they appeared (seen since {}); a prune on {source} removes them.\n{list}",
+                plural(n, "file"),
+                if n == 1 { "does not" } else { "do not" },
+                crate::web::fmt::datetime(found.since)
+            ),
+            device_id: Some(&device.id),
+        },
+    )
+    .await;
+    let vouched =
+        crate::mirrors::vouched_at(app, &found.source_device_id, found.since).unwrap_or(None);
+    if vouched.is_some() {
+        clear(app, &unverified_key).await;
+    } else if db::now() - found.since > crate::mirrors::grace(app, &found.source_device_id) {
+        raise(
+            app,
+            Raise {
+                key: unverified_key,
+                kind: "integrity",
+                severity: ALERT,
+                title: format!("{}: {source}'s repository not checked since files broke there", label(&device, &job)),
+                detail: format!(
+                    "{} on {source}'s side {} match their name (seen since {}), and no check of {source}'s repository has passed since. If restic uses one of them, the repository is damaged: run a check on {source}.\n{list}",
+                    plural(n, "file"),
+                    if n == 1 { "does not" } else { "do not" },
+                    crate::web::fmt::datetime(found.since)
+                ),
+                device_id: Some(&device.id),
+            },
+        )
+        .await;
+    }
+}
+
 /// Raises or clears the alerts a finished run settles.
 pub async fn on_run_finished(
     app: &Arc<App>,
@@ -209,6 +305,24 @@ pub async fn on_run_finished(
     let partial_key = format!("run_partial:{}", job.id);
     let integrity_key = format!("check_failed:{}", job.id);
     clear(app, &format!("lost:{}", job.id)).await;
+    match run.kind {
+        RunKind::Mirror => review_source_mismatches(app, job.id).await,
+        // A passing check of a repository may vouch for files a mirror of it
+        // found broken there.
+        RunKind::Check if finish.status == RunStatus::Success => {
+            let mirror_jobs: std::collections::BTreeSet<i64> = app
+                .store
+                .mirror_runs_of(&device.id)
+                .unwrap_or_default()
+                .into_iter()
+                .map(|(r, _)| r.job_id)
+                .collect();
+            for job_id in mirror_jobs {
+                review_source_mismatches(app, job_id).await;
+            }
+        }
+        _ => {}
+    }
     let reason = finish
         .message
         .clone()
@@ -411,6 +525,17 @@ pub fn silent_after(interval: i64) -> i64 {
 
 /// The periodic part: lost runs, silent jobs, the box filling up.
 pub async fn evaluate(app: &Arc<App>) -> anyhow::Result<()> {
+    // Files broken on a mirror's source turn into an integrity alert once the
+    // source has had time for a check and none passed.
+    let pending: Vec<i64> = app
+        .store
+        .open_alerts()?
+        .iter()
+        .filter_map(|a| a.key.strip_prefix("source_broken:")?.parse().ok())
+        .collect();
+    for job_id in pending {
+        review_source_mismatches(app, job_id).await;
+    }
     let now = db::now();
     let lost_after = app.config.alerts.lost_after_secs as i64;
     for run in app.store.running_runs()? {

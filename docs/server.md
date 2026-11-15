@@ -215,11 +215,25 @@ another message, without the mention. An alert still open is not sent again.
 | --- | --- | --- |
 | run failed | a backup, prune or mirror ends failed, locked, without repository or with the wrong password | that job's next successful run of the same kind |
 | run partial (warning) | a backup could not read some files; lists them | the next successful backup |
-| integrity check failed | a check run fails or finds errors, or a mirror finds files not matching their hash | the next successful check or mirror |
+| integrity check failed | a check run fails or finds errors, or a mirror's copy is broken (files still not matching their hash after a fresh download fail to download again) | the next successful check or mirror |
+| broken on the source (warning) | a mirror finds files wrong on the source itself (a fresh download is still wrong), usually leftovers of an interrupted upload; lists them. The mirror run itself succeeds | a mirror reports none |
+| source not checked since (alert) | such files have been reported, and the source's repository has had no passing check since they first appeared, for longer than the source's interval plus the silent-job margin (daily → 26 h) | a passing check of the source, or a mirror reporting none |
 | job silent | no run for the job's expected interval plus a margin (daily → 26 h); the interval is declared by the device, derived from its schedule, or set per job on the device page | a run starts |
 | run lost (warning) | a running run has no news for `lost_after_secs` (or 1.5 × restic's own estimate) | the job's next finished run |
 | box full | 80% (warning) and 95% (alert), set on Settings | usage drops below |
 | drift (warning) | see above | a successful check, or dismissed |
+
+**Files broken on a mirror's source.** A mirroring device has no password, so it
+cannot tell whether restic uses a file; the source can. restic 0.19 compares the
+size of every pack its index lists with the file on the box in a plain `check`
+(no `--read-data` needed): a truncated pack in use fails it, an unused one does
+not. So a passing check of the source that finished after the broken files were
+first seen means none of them is in use: the warning stays (the files are still
+there, until a prune on the source removes them) but nothing escalates, and the
+device page says they are harmless. Until then, a mirror run with such files does
+not count towards "safe to delete" on the phone. The limit: a pack in use damaged
+without a size change passes the plain check; the source's
+`--read-data-subset` checks and the mirror's hashing find it over time.
 
 The Problems page also lists what is not set up (no token, no webhook) and
 Discord deliveries that failed.

@@ -8,7 +8,7 @@
 //! source (the phone never prunes, so this should not happen) are moved aside
 //! and kept for a while rather than deleted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -18,7 +18,7 @@ use chrono::{DateTime, NaiveDateTime, Utc};
 use replique_proto::{
     FinishRun, MirrorSource, MirrorSources, MirrorSummary, Progress, RunError, RunKind, RunStatus,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::api::ApiError;
@@ -87,16 +87,53 @@ pub fn run(
     };
 
     let mut run = reporter.start(RunKind::Mirror);
+    let rclone = std::env::var_os("REPLIQUE_RCLONE").unwrap_or_else(|| "rclone".into());
+    let mut previous = load_verified(state, name);
+
+    // Files found broken on the source itself in earlier runs stay out of the
+    // copy while they are unchanged there: downloading and hashing them again
+    // would only fail again. One that changed (size or modification time) is
+    // checked afresh; one that is gone (a prune on the source) is forgotten.
+    // Their local copies are removed, so this machine never holds a file it
+    // knows to be bad.
+    let mut broken = load_source_broken(state, name);
+    let mut left_out: Vec<String> = Vec::new();
+    for (rel, known) in broken.clone() {
+        match stat_source(&rclone, &source, &rel) {
+            Ok(Some(now)) if now.size == known.size && now.mod_time == known.mod_time => {
+                left_out.push(rel)
+            }
+            Ok(Some(_)) => {
+                log!("{rel}: changed on the source, checking it again");
+                broken.remove(&rel);
+            }
+            Ok(None) => {
+                log!("{rel}: gone from the source");
+                broken.remove(&rel);
+            }
+            Err(e) => {
+                log!("{rel}: cannot look at it on the source ({e}); still left out");
+                left_out.push(rel);
+            }
+        }
+    }
+    for rel in &left_out {
+        let _ = fs::remove_file(dest.join(rel));
+        previous.remove(rel);
+    }
 
     // Copies a run found broken are dropped before copying again. rclone runs
     // with --immutable, so it would refuse to replace them, and the copy would
-    // fail the same way every night; removed, they come back whole below. A
-    // file that is wrong on the source itself fails again after this.
-    let mut previous = load_verified(state, name);
+    // fail the same way every night; removed, they come back whole below. One
+    // still wrong after that fresh copy is wrong on the source.
     let recheck = verify(&dest, &previous, stop, |_| {});
+    let mut fetched_again: BTreeSet<String> = BTreeSet::new();
     for rel in &recheck.mismatches {
         match fs::remove_file(dest.join(rel)) {
-            Ok(()) => log!("{rel}: did not match its name, copying it again"),
+            Ok(()) => {
+                log!("{rel}: did not match its name, copying it again");
+                fetched_again.insert(rel.clone());
+            }
             Err(e) => log!("{rel}: did not match its name and cannot be removed: {e}"),
         }
     }
@@ -120,10 +157,7 @@ pub fn run(
         // backups, and a copy of it here would be misleading.
         "--exclude".into(),
         "/.ssh/**".into(),
-        // A file the source is still uploading: the phone's rclone writes each
-        // one as `<name>.<random>.partial` and renames it once complete. Copied
-        // mid-upload, it grows under rclone, which then reports it corrupted
-        // ("sizes differ"); it comes with the next run under its real name.
+        // A file the source is still uploading under a temporary name.
         "--exclude".into(),
         "*.partial".into(),
         // restic never rewrites a file: one changing in place is corruption, and
@@ -144,13 +178,89 @@ pub fn run(
         args.push("--min-age".into());
         args.push(min_age);
     }
+    if !left_out.is_empty() {
+        let filter = state.mirror_dir().join(format!("{name}.left-out"));
+        // Repository file names are hexadecimal: nothing to escape for rclone's
+        // filter syntax.
+        let lines: String = left_out.iter().map(|r| format!("/{r}\n")).collect();
+        match state.write(&filter, lines.as_bytes(), Kind::Shared) {
+            Ok(()) => {
+                args.push("--exclude-from".into());
+                args.push(filter.to_string_lossy().into_owned());
+            }
+            Err(e) => log!("cannot write {}: {e}", filter.display()),
+        }
+    }
     args.extend(source.flags.iter().cloned());
 
-    let rclone = std::env::var_os("REPLIQUE_RCLONE").unwrap_or_else(|| "rclone".into());
     let copy = sync(&rclone, &args, stop, |p| reporter.progress(&mut run, p));
 
-    let verify = verify(&dest, &previous, stop, |p| reporter.progress(&mut run, p));
+    let mut verify = verify(&dest, &previous, stop, |p| reporter.progress(&mut run, p));
+
+    // Sort what does not match its name. Wrong again after this run's fresh
+    // copy: the file on the source is wrong. Wrong at its first sighting: one
+    // more download decides between the copy (it then matches) and the source.
+    // Only a file that cannot be fetched again stays a broken copy.
+    let mut on_source: Vec<String> = Vec::new();
+    let mut broken_copies: Vec<String> = Vec::new();
+    for rel in std::mem::take(&mut verify.mismatches) {
+        if stop.requested() {
+            broken_copies.push(rel);
+            continue;
+        }
+        if fetched_again.contains(&rel) {
+            on_source.push(rel);
+            continue;
+        }
+        let local = dest.join(&rel);
+        let _ = fs::remove_file(&local);
+        match copy_one(&rclone, &source, &local, &rel) {
+            Ok(()) if matches_name(&local, &rel) => {
+                let size = fs::metadata(&local).map(|m| m.len()).unwrap_or(0);
+                log!("{rel}: the first copy was damaged; the second one matches");
+                verify.new_files += 1;
+                verify.new_bytes += size;
+                verify.verified.insert(rel, size);
+            }
+            Ok(()) => on_source.push(rel),
+            Err(e) => {
+                log!("{rel}: did not match its name and cannot be copied again: {e}");
+                broken_copies.push(rel);
+            }
+        }
+    }
+    let now = Utc::now().to_rfc3339();
+    for rel in &on_source {
+        let _ = fs::remove_file(dest.join(rel));
+        match stat_source(&rclone, &source, rel) {
+            Ok(Some(at)) => {
+                log!("{rel}: broken on the source (still wrong after a fresh copy); left out");
+                broken.insert(
+                    rel.clone(),
+                    SourceBroken {
+                        size: at.size,
+                        mod_time: at.mod_time,
+                        first_seen: now.clone(),
+                    },
+                );
+            }
+            // Reported, but not remembered: the next run looks again.
+            Ok(None) => log!("{rel}: broken on the source, and gone from it meanwhile"),
+            Err(e) => log!("{rel}: broken on the source; cannot record it there ({e})"),
+        }
+    }
+    verify.snapshot_ids = verify
+        .verified
+        .keys()
+        .filter_map(|k| k.strip_prefix("snapshots/"))
+        .map(str::to_string)
+        .collect();
     save_verified(state, name, &verify.verified);
+    save_source_broken(state, name, &broken);
+
+    let mut source_mismatches: Vec<String> = left_out.into_iter().chain(on_source).collect();
+    source_mismatches.sort();
+    source_mismatches.dedup();
 
     let files_removed = count_files(&backup_dir);
     expire_removed(&removed_root, job.keep_removed_days);
@@ -161,7 +271,8 @@ pub fn run(
         bytes_copied: verify.new_bytes,
         files_removed,
         files_verified: verify.hashed,
-        hash_mismatches: verify.mismatches.clone(),
+        hash_mismatches: broken_copies.clone(),
+        source_mismatches: source_mismatches.clone(),
         snapshot_ids: verify.snapshot_ids.clone(),
         total_bytes: Some(verify.total_bytes),
     };
@@ -178,14 +289,25 @@ pub fn run(
                 .clone()
                 .or(Some(format!("rclone exited with {}", copy.code))),
         )
-    } else if !verify.mismatches.is_empty() {
+    } else if !broken_copies.is_empty() {
         (
             RunStatus::Failed,
             1,
             Some(format!(
                 "{} file(s) of the copy do not match their name, first {}",
-                verify.mismatches.len(),
-                verify.mismatches[0]
+                broken_copies.len(),
+                broken_copies[0]
+            )),
+        )
+    } else if !source_mismatches.is_empty() {
+        // Not a failure of the mirror: the copy holds everything else. Whether
+        // these files matter is the source's own check to say.
+        (
+            RunStatus::Success,
+            0,
+            Some(format!(
+                "{} file(s) broken on the source, left out of the copy (probably left over from an interrupted upload)",
+                source_mismatches.len()
             )),
         )
     } else {
@@ -567,6 +689,116 @@ pub fn expire_removed(root: &Path, days: u32) {
             log!("could not delete {}: {err}", e.path().display());
         }
     }
+}
+
+/// A file broken on the source itself, as it was there when found: a change
+/// of size or modification time means it is worth checking again.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct SourceBroken {
+    size: u64,
+    mod_time: String,
+    first_seen: String,
+}
+
+fn source_broken_file(state: &State, job: &str) -> PathBuf {
+    state.mirror_dir().join(format!("{job}.source-broken.json"))
+}
+
+fn load_source_broken(state: &State, job: &str) -> BTreeMap<String, SourceBroken> {
+    fs::read_to_string(source_broken_file(state, job))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default()
+}
+
+fn save_source_broken(state: &State, job: &str, v: &BTreeMap<String, SourceBroken>) {
+    if let Ok(bytes) = serde_json::to_vec_pretty(v)
+        && let Err(e) = state.write(&source_broken_file(state, job), &bytes, Kind::Shared)
+    {
+        log!("could not remember the files broken on the source: {e}");
+    }
+}
+
+struct SourceStat {
+    size: u64,
+    mod_time: String,
+}
+
+/// One file's size and modification time on the source, without downloading
+/// it. `None` when it is not there (any more).
+fn stat_source(
+    rclone: &std::ffi::OsStr,
+    source: &Source,
+    rel: &str,
+) -> Result<Option<SourceStat>, String> {
+    #[derive(Deserialize)]
+    struct Entry {
+        #[serde(rename = "Size")]
+        size: i64,
+        #[serde(rename = "ModTime")]
+        mod_time: String,
+    }
+    let out = Command::new(rclone)
+        .args(["lsjson", "--stat"])
+        .arg(source_path(source, rel))
+        .args(&source.flags)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run rclone: {e}"))?;
+    match exit_code(out.status) {
+        0 => {
+            let e: Entry = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+            Ok(Some(SourceStat {
+                size: e.size.max(0) as u64,
+                mod_time: e.mod_time,
+            }))
+        }
+        // rclone's "directory not found" and "file not found".
+        3 | 4 => Ok(None),
+        code => Err(format!(
+            "rclone lsjson exited with {code}: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("")
+        )),
+    }
+}
+
+/// Downloads one file of the source again, to `local`.
+fn copy_one(
+    rclone: &std::ffi::OsStr,
+    source: &Source,
+    local: &Path,
+    rel: &str,
+) -> Result<(), String> {
+    let out = Command::new(rclone)
+        .arg("copyto")
+        .arg(source_path(source, rel))
+        .arg(local)
+        .args(&source.flags)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run rclone: {e}"))?;
+    match exit_code(out.status) {
+        0 => Ok(()),
+        code => Err(format!(
+            "rclone copyto exited with {code}: {}",
+            String::from_utf8_lossy(&out.stderr)
+                .lines()
+                .last()
+                .unwrap_or("")
+        )),
+    }
+}
+
+fn source_path(source: &Source, rel: &str) -> String {
+    format!("{}/{rel}", source.remote.trim_end_matches('/'))
+}
+
+fn matches_name(path: &Path, rel: &str) -> bool {
+    let name = rel.rsplit('/').next().unwrap_or("");
+    sha256_hex(path).is_ok_and(|h| h == name)
 }
 
 fn verified_file(state: &State, job: &str) -> PathBuf {

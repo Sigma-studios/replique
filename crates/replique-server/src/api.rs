@@ -367,7 +367,32 @@ pub fn safest_snapshot(
     let mut partials = app.store.runs_of_device(device_id, 200)?;
     partials.retain(|r| r.kind == RunKind::Backup && r.status == RunStatus::Partial);
     let checks = app.store.successful_runs(device_id, RunKind::Check)?;
-    let mirrors = app.store.mirror_runs_of(device_id)?;
+    // Mirror runs that vouch for what they list: no broken copy, and files
+    // broken on this device's side (if any) cleared by this device's own check,
+    // passed after the last of them was first seen. That check fails on a
+    // truncated pack in use, so a pass means the broken files are unused (see
+    // `mirrors`). Deleting originals from the phone rests on this: when in
+    // doubt, a mirror run does not count.
+    let mut histories = crate::mirrors::Histories::default();
+    let mut mirrors = Vec::new();
+    for (m, name) in app.store.mirror_runs_of(device_id)? {
+        let Some(mi) = m.finish.as_ref().and_then(|f| f.mirror.as_ref()) else {
+            continue;
+        };
+        if !mi.hash_mismatches.is_empty() {
+            continue;
+        }
+        if !mi.source_mismatches.is_empty() {
+            let vouched = match histories.of_run(app, &m)? {
+                Some(found) => crate::mirrors::vouched_at(app, device_id, found.since)?.is_some(),
+                None => false,
+            };
+            if !vouched {
+                continue;
+            }
+        }
+        mirrors.push((m, name));
+    }
     let mut snapshots: Vec<(String, i64)> = backups
         .iter()
         .chain(partials.iter())
@@ -410,11 +435,9 @@ pub fn safest_snapshot(
                     .as_ref()
                     .and_then(|f| f.mirror.as_ref())
                     .is_some_and(|mi| {
-                        mi.hash_mismatches.is_empty()
-                            && mi
-                                .snapshot_ids
-                                .iter()
-                                .any(|s| same_snapshot(s, &snapshot_id))
+                        mi.snapshot_ids
+                            .iter()
+                            .any(|s| same_snapshot(s, &snapshot_id))
                     })
             })
             .filter_map(|(m, name)| m.finished_at.map(|at| (at, name.clone())))

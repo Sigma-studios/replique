@@ -162,7 +162,15 @@ fn runs() {
     let check: FinishRun = round_trip("run_finish_check.json");
     assert_eq!(check.check.unwrap().snapshot_ids.len(), 2);
     let mirror: FinishRun = round_trip("run_finish_mirror.json");
-    assert!(mirror.mirror.unwrap().hash_mismatches.is_empty());
+    let m = mirror.mirror.unwrap();
+    assert!(m.hash_mismatches.is_empty());
+    // Only broken on the source: the run still succeeded.
+    assert_eq!(m.source_mismatches.len(), 1);
+    assert_eq!(mirror.status, RunStatus::Success);
+    // A report from an older client, without the field, reads as none.
+    let old = r#"{"source_device_id":"dev_X","hash_mismatches":[]}"#;
+    let old: MirrorSummary = serde_json::from_str(old).unwrap();
+    assert!(old.source_mismatches.is_empty());
 }
 
 #[test]

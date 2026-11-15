@@ -14,6 +14,7 @@ pub mod db;
 pub mod events;
 pub mod hetzner;
 pub mod measure;
+pub mod mirrors;
 pub mod provision;
 pub mod restore;
 pub mod secrets;
