@@ -248,6 +248,17 @@ pub async fn write_authorized_keys(
     dir: &str,
     keys: &[String],
 ) -> anyhow::Result<()> {
+    edit_authorized_keys(sftp, dir, keys, &[]).await
+}
+
+/// Adds `add` to and takes `remove` out of `<dir>/.ssh/authorized_keys`, keeping
+/// every other line as it is.
+pub async fn edit_authorized_keys(
+    sftp: &SftpSession,
+    dir: &str,
+    add: &[String],
+    remove: &[String],
+) -> anyhow::Result<()> {
     let dir = dir.trim_end_matches('/');
     let ssh_dir = if dir.is_empty() || dir == "." {
         ".ssh".to_string()
@@ -269,7 +280,7 @@ pub async fn write_authorized_keys(
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => String::new(),
     };
-    let content = merge_keys(&existing, keys);
+    let content = merge_keys(&drop_keys(&existing, remove), add);
     let mut file = sftp
         .create(&file_path)
         .await
@@ -277,6 +288,27 @@ pub async fn write_authorized_keys(
     file.write_all(content.as_bytes()).await?;
     file.shutdown().await?;
     Ok(())
+}
+
+/// `existing` without the lines holding any of `keys` (compared on algorithm
+/// and key, ignoring comments).
+pub fn drop_keys(existing: &str, keys: &[String]) -> String {
+    let id = |line: &str| {
+        line.split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let gone: Vec<String> = keys.iter().map(|k| id(k)).collect();
+    let kept: Vec<&str> = existing
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !gone.contains(&id(l)))
+        .collect();
+    if kept.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", kept.join("\n"))
+    }
 }
 
 /// `existing` plus every key of `keys` not in it yet (compared on algorithm
@@ -452,6 +484,19 @@ mod tests {
         // The same file again loads the same key.
         let again = load_or_create_key(&dir.path().join("k")).unwrap();
         assert_eq!(key_line(again.public_key()), line);
+    }
+
+    #[test]
+    fn keys_drop() {
+        let left = drop_keys(
+            "ssh-ed25519 AAA dev\nssh-ed25519 BBB pc\n",
+            &["ssh-ed25519 BBB other-comment".into()],
+        );
+        assert_eq!(left, "ssh-ed25519 AAA dev\n");
+        assert_eq!(
+            drop_keys("ssh-ed25519 AAA dev\n", &["ssh-ed25519 AAA".into()]),
+            ""
+        );
     }
 
     #[test]

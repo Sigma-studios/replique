@@ -59,7 +59,7 @@ fn unlock_page(
             h1 { "Unlock " (device.name) "'s backups" }
             @if let Some(e) = error { div.notice.error { (e) } }
             div.card {
-                form.stack method="post" action={ "/repos/" (repo.id) "/unlock" } {
+                form.stack method="post" action={ "/repos/" (repo.id) "/unlock" } data-busy="Opening the repository (restic reads its keys and index)…" {
                     (csrf_field(ctx))
                     label { "Restic password of this repository"
                         span.hint { "the one the device showed once at pairing, from your password manager" }

@@ -205,20 +205,43 @@ impl App {
         password: &Secret,
         keys: &[String],
     ) -> anyhow::Result<()> {
+        self.edit_keys(
+            endpoint,
+            home_directory,
+            password,
+            replique_proto::REPO_DIR,
+            keys,
+            &[],
+        )
+        .await
+    }
+
+    /// Adds and removes keys in `<dir>/.ssh/authorized_keys` (`dir` relative to
+    /// the sub-account's home: the repository folder for its twin, `.` for the
+    /// sub-account itself), over SFTP with a password set for the occasion.
+    pub async fn edit_keys(
+        &self,
+        endpoint: &Endpoint,
+        home_directory: &str,
+        password: &Secret,
+        dir: &str,
+        add: &[String],
+        remove: &[String],
+    ) -> anyhow::Result<()> {
         if let Some(root) = &self.config.storage_box.local_root {
-            let dir = root
-                .join(home_directory)
-                .join(replique_proto::REPO_DIR)
-                .join(".ssh");
+            let dir = root.join(home_directory).join(dir).join(".ssh");
             std::fs::create_dir_all(&dir)?;
             let file = dir.join("authorized_keys");
             let existing = std::fs::read_to_string(&file).unwrap_or_default();
-            std::fs::write(&file, ssh::merge_keys(&existing, keys))?;
+            std::fs::write(
+                &file,
+                ssh::merge_keys(&ssh::drop_keys(&existing, remove), add),
+            )?;
             return Ok(());
         }
         let conn = self.ssh_connect(endpoint, Auth::Password(password)).await?;
         let sftp = conn.sftp().await?;
-        let result = ssh::write_authorized_keys(&sftp, replique_proto::REPO_DIR, keys).await;
+        let result = ssh::edit_authorized_keys(&sftp, dir, add, remove).await;
         let _ = sftp.close().await;
         conn.close().await;
         result

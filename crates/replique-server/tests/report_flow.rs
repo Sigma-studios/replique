@@ -485,6 +485,27 @@ async fn device_added_paired_and_reporting() {
     assert!(twin_keys.contains(&server.app.public_key_line()[..60]));
     let phone_keys = read("replique/sigma/telephone/.ssh/authorized_keys");
     assert_eq!(devices(&phone_keys), 1, "only the phone's own key");
+    // Stopping the mirror takes the PC's key off the twin, Réplique's stays;
+    // allowing it again puts it back.
+    let (status, location) = browser
+        .post(&format!("/devices/{pc_id}/mirrors/{phone_id}/remove"), &[])
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.contains("ok="), "{location}");
+    let twin_keys = read("replique/sigma/telephone/restic/.ssh/authorized_keys");
+    assert_eq!(devices(&twin_keys), 0, "the PC's key is gone");
+    assert!(twin_keys.contains(&server.app.public_key_line()[..60]));
+    let none: MirrorSources = pc.get(paths::MIRROR_SOURCES).await.json().await.unwrap();
+    assert!(none.sources.is_empty());
+    let (status, _) = browser
+        .post(
+            &format!("/devices/{pc_id}/mirrors"),
+            &[("source", &phone_id)],
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    let twin_keys = read("replique/sigma/telephone/restic/.ssh/authorized_keys");
+    assert_eq!(devices(&twin_keys), 1, "the PC's key is back");
 
     let mirror = pc
         .start("phone-mirror", RunKind::Mirror, &uuid(), chrono::Utc::now())

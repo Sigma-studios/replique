@@ -402,7 +402,7 @@ fn pairing_block(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup
                     p.muted { "No valid code." }
                 }
             }
-            form method="post" action={ "/devices/" (device.id) "/pairing-code" } style="margin-top: 0.8rem" {
+            form method="post" action={ "/devices/" (device.id) "/pairing-code" } style="margin-top: 0.8rem" data-busy="Setting a fresh password on the Storage Box… (about 15 s)" {
                 (csrf_field(ctx))
                 button type="submit" { "New pairing code" }
             }
@@ -596,7 +596,7 @@ pub async fn device(
                         div.copy { code { (step.command) } button type="button" data-copy=(step.command) { "Copy" } }
                         p.small { "Password: " code { (step.password.expose()) } }
                     }
-                    form method="post" action={ "/devices/" (device.id) "/manual-done" } {
+                    form method="post" action={ "/devices/" (device.id) "/manual-done" } data-busy="Replacing the password on the Storage Box… (about 15 s)" {
                         (csrf_field(&ctx))
                         button.primary type="submit" { "Done: rotate the passwords" }
                     }
@@ -641,12 +641,12 @@ pub async fn device(
                     p.small.muted { "This device can keep an encrypted byte copy of another device's repository, pulled through that repository's read-only login. It needs no password and cannot read it." }
                     @for s in &sources {
                         @let name = others.iter().find(|d| &d.id == s).map(|d| d.name.clone()).unwrap_or_else(|| s.clone());
-                        form.row method="post" action={ "/devices/" (device.id) "/mirrors/" (s) "/remove" } {
+                        form.row method="post" action={ "/devices/" (device.id) "/mirrors/" (s) "/remove" } data-busy="Taking this device's key off the source's read-only login… (about 30 s)" {
                             (csrf_field(&ctx)) span { "Mirrors " strong { (name) } } button.link type="submit" { "stop" }
                         }
                     }
                     @if device.ssh_public_key.is_some() && !others.is_empty() {
-                        form.row method="post" action={ "/devices/" (device.id) "/mirrors" } {
+                        form.row method="post" action={ "/devices/" (device.id) "/mirrors" } data-busy="Adding this device's key to the source's read-only login… (about 30 s)" {
                             (csrf_field(&ctx))
                             select name="source" style="max-width: 16rem" {
                                 @for d in &others { @if !sources.contains(&d.id) { option value=(d.id) { (d.name) } } }
@@ -746,7 +746,7 @@ pub async fn remove_form(
         html! {
             h1 { "Remove " (device.name) }
             div.card {
-                form.stack method="post" action={ "/devices/" (device.id) "/remove" } {
+                form.stack method="post" action={ "/devices/" (device.id) "/remove" } data-busy="Removing the device from the Storage Box… (up to a few minutes when deleting data)" {
                     (csrf_field(&ctx))
                     p { "Its sub-accounts are deleted on the Storage Box, its report token stops working, and its runs and measurements are forgotten here." }
                     label.inline { input type="radio" name="data" value="keep" checked; "Keep its backups on the box" }
@@ -1058,12 +1058,18 @@ pub async fn remove_mirror(
     _admin: Admin,
     Path((id, source)): Path<(String, String)>,
 ) -> WebResult {
-    app.store.remove_mirror(&id, &source)?;
-    Ok(redirect_with(
-        &format!("/devices/{id}"),
-        "ok",
-        "This device no longer lists that mirror. Its key stays on the source's read-only login until removed in the Hetzner Console.",
-    ))
+    match provision::revoke_mirror(&app, &id, &source).await {
+        Ok(()) => Ok(redirect_with(
+            &format!("/devices/{id}"),
+            "ok",
+            "Mirroring stopped; this device's key is off the source's read-only login.",
+        )),
+        Err(e) => Ok(redirect_with(
+            &format!("/devices/{id}"),
+            "error",
+            &format!("{e:#}"),
+        )),
+    }
 }
 
 // ---------------------------------------------------------------- storage
@@ -1400,7 +1406,7 @@ pub async fn settings(
             h1 { "Settings" }
             h2 { "Storage Box" }
             div.card {
-                form.stack method="post" action="/settings/hetzner" {
+                form.stack method="post" action="/settings/hetzner" data-busy="Checking with Hetzner…" {
                     (csrf_field(&ctx))
                     label { "Storage Box id"
                         span.hint { "the number in the Hetzner Console's address for the box" }
@@ -1416,7 +1422,7 @@ pub async fn settings(
                     }
                     div.actions { button.primary type="submit" { "Save" } }
                 }
-                form method="post" action="/settings/refresh" style="margin-top: 0.6rem" {
+                form method="post" action="/settings/refresh" style="margin-top: 0.6rem" data-busy="Reading the box from Hetzner…" {
                     (csrf_field(&ctx)) button type="submit" { "Check the box now" }
                 }
                 dl.kv.small style="margin-top: 0.8rem" {
@@ -1471,7 +1477,7 @@ pub async fn settings(
                     }
                 }
                 @if webhook.is_some() {
-                    form method="post" action="/settings/discord/test" style="margin-top: 0.6rem" {
+                    form method="post" action="/settings/discord/test" style="margin-top: 0.6rem" data-busy="Sending a test message…" {
                         (csrf_field(&ctx)) button type="submit" { "Send a test message" }
                     }
                 }
@@ -1636,7 +1642,7 @@ pub fn login(token: &str, next: Option<&str>, failed: bool, configured: bool) ->
             }
             @if failed { div.notice.error { "Wrong password." } }
             div.card {
-                form.stack method="post" action="/login" {
+                form.stack method="post" action="/login" data-busy="Logging in…" {
                     input type="hidden" name="token" value=(token);
                     @if let Some(n) = next { input type="hidden" name="next" value=(n); }
                     label { "Password" input type="password" name="password" autocomplete="current-password" autofocus required; }

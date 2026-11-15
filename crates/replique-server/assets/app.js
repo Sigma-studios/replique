@@ -19,18 +19,45 @@
     // EventSource reconnects by itself; nothing to do on error.
   }
 
-  // Forms marked data-busy="…" say so while the server works, and cannot be
-  // sent twice: adding a device takes Hetzner half a minute.
+  // Every form that posts says so while the server works, and cannot be sent
+  // twice. Several take a while: each sub-account change is a Hetzner action of
+  // ten seconds or more, and a click with no answer invites a second one. A
+  // form's data-busy (or its button's) names what is happening; "Working…"
+  // otherwise.
   document.addEventListener("submit", function (e) {
-    var form = e.target.closest("form[data-busy]");
-    if (!form) return;
+    var form = e.target;
+    if (!form.matches || !form.matches("form") || (form.method || "").toLowerCase() !== "post") return;
+    // A confirm() declined in the form's own onsubmit.
+    if (e.defaultPrevented) return;
     if (form.dataset.sent) { e.preventDefault(); return; }
     form.dataset.sent = "1";
-    var b = form.querySelector("button[type=submit]");
-    if (b) {
-      // Disabled after this tick, so the browser still sends the form.
-      setTimeout(function () { b.disabled = true; b.textContent = form.dataset.busy; }, 0);
-    }
+    var button = e.submitter || form.querySelector("button[type=submit], button:not([type])");
+    var label = (button && button.dataset.busy) || form.dataset.busy || "Working…";
+    document.body.classList.add("busy");
+    // After this tick, so the browser still sends the form (a disabled
+    // submitter would drop out of it).
+    setTimeout(function () {
+      form.querySelectorAll("button").forEach(function (b) { b.disabled = true; });
+      if (button) {
+        button.dataset.label = button.innerHTML;
+        button.classList.add("working");
+        button.innerHTML = '<span class="spinner" aria-hidden="true"></span>';
+        button.appendChild(document.createTextNode(label));
+      }
+    }, 0);
+  });
+
+  // Back to a page kept in the browser's cache: undo the waiting state.
+  window.addEventListener("pageshow", function (e) {
+    if (!e.persisted) return;
+    document.body.classList.remove("busy");
+    document.querySelectorAll("form[data-sent]").forEach(function (form) {
+      delete form.dataset.sent;
+      form.querySelectorAll("button").forEach(function (b) {
+        b.disabled = false;
+        if (b.dataset.label !== undefined) { b.innerHTML = b.dataset.label; b.classList.remove("working"); }
+      });
+    });
   });
 
   // Copy buttons: <button data-copy="text">.

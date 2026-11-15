@@ -545,6 +545,13 @@ pub async fn remove_device(
         .store
         .device(device_id)?
         .ok_or_else(|| anyhow!("no such device"))?;
+    // A device that mirrors others leaves no key behind on their read-only
+    // logins.
+    for source in app.store.mirror_sources_of(device_id)? {
+        if let Err(e) = revoke_mirror(app, device_id, &source).await {
+            tracing::warn!(device = %device.name, "removing its mirror key from {source}: {e:#}");
+        }
+    }
     let repo = app.store.repository_of(device_id)?;
     if let Some(repo) = &repo {
         if simulated(app) {
@@ -596,8 +603,7 @@ pub async fn remove_device(
 
 /// Lets `mirror_id` copy `source_id`'s repository: adds the mirroring device's
 /// key to the source's read-only twin (or, without twins, to the source's own
-/// sub-account). Either way it is written through the source's writable
-/// sub-account, logging in with a password set just for that.
+/// sub-account).
 pub async fn assign_mirror(app: &Arc<App>, mirror_id: &str, source_id: &str) -> anyhow::Result<()> {
     if mirror_id == source_id {
         bail!("A device cannot mirror itself.");
@@ -614,54 +620,89 @@ pub async fn assign_mirror(app: &Arc<App>, mirror_id: &str, source_id: &str) -> 
         .store
         .repository_of(source_id)?
         .ok_or_else(|| anyhow!("no such source device"))?;
+    if manual(app) {
+        bail!(
+            "Key installation is manual: add {}'s key for {} by hand, then assign again.",
+            mirror.name,
+            repo.username
+        );
+    }
+    change_mirror_key(app, &repo, &key, true).await?;
+    app.store.add_mirror(mirror_id, source_id)?;
+    app.hub.publish(Event::Devices);
+    Ok(())
+}
+
+/// Stops `mirror_id` copying `source_id`: takes its key off the source's
+/// read-only login, so the copying stops on the box and not only in the list.
+pub async fn revoke_mirror(app: &Arc<App>, mirror_id: &str, source_id: &str) -> anyhow::Result<()> {
+    let key = app.store.device(mirror_id)?.and_then(|d| d.ssh_public_key);
+    let repo = app.store.repository_of(source_id)?;
+    if let (Some(key), Some(repo)) = (key, repo)
+        && !manual(app)
+    {
+        change_mirror_key(app, &repo, &key, false).await?;
+    }
+    app.store.remove_mirror(mirror_id, source_id)?;
+    app.hub.publish(Event::Devices);
+    Ok(())
+}
+
+/// Adds or removes a mirroring device's key where the source is read from:
+/// the twin's `authorized_keys` in the repository folder, or without twins the
+/// source sub-account's own. Either way the file is written through the
+/// source's writable sub-account, with a password that lives for this only.
+async fn change_mirror_key(
+    app: &App,
+    repo: &Repository,
+    key: &str,
+    add: bool,
+) -> anyhow::Result<()> {
     let twins = uses_twins(app);
     if twins && repo.twin_username.is_none() {
         bail!("The source has no read-only login.");
     }
+    let dir = if twins { replique_proto::REPO_DIR } else { "." };
+    let keys = [key.to_string()];
+    let (add_keys, remove_keys): (&[String], &[String]) =
+        if add { (&keys, &[]) } else { (&[], &keys) };
     let endpoint = Endpoint {
         host: repo.host.clone(),
         port: repo.port,
         username: repo.username.clone(),
     };
-    let install = |password: Secret| {
-        let (endpoint, home, key) = (endpoint.clone(), repo.home_directory.clone(), key.clone());
-        let app = app.clone();
-        async move {
-            if twins {
-                app.install_twin_keys(&endpoint, &home, &password, &[key])
-                    .await
-            } else {
-                app.install_keys(&endpoint, &home, &password, &[key])
-                    .await
-                    .map(|_| ())
-            }
-        }
-    };
     if simulated(app) {
-        install(Secret::new(String::new())).await?;
-    } else {
-        if manual(app) {
-            bail!(
-                "Key installation is manual: add {}'s key for {} by hand, then assign again.",
-                mirror.name,
-                endpoint.username
-            );
-        }
-        let (hetzner, box_id) = app.hetzner()?;
-        let id = repo
-            .subaccount_id
-            .ok_or_else(|| anyhow!("unknown sub-account id"))? as u64;
-        let password = secrets::new_box_password();
-        hetzner
-            .reset_subaccount_password(box_id, id, &password)
-            .await?;
-        let installed = install(password).await;
-        hetzner
-            .reset_subaccount_password(box_id, id, &secrets::new_box_password())
-            .await?;
-        installed?;
+        return app
+            .edit_keys(
+                &endpoint,
+                &repo.home_directory,
+                &Secret::new(String::new()),
+                dir,
+                add_keys,
+                remove_keys,
+            )
+            .await;
     }
-    app.store.add_mirror(mirror_id, source_id)?;
-    app.hub.publish(Event::Devices);
-    Ok(())
+    let (hetzner, box_id) = app.hetzner()?;
+    let id = repo
+        .subaccount_id
+        .ok_or_else(|| anyhow!("unknown sub-account id"))? as u64;
+    let password = secrets::new_box_password();
+    hetzner
+        .reset_subaccount_password(box_id, id, &password)
+        .await?;
+    let edited = app
+        .edit_keys(
+            &endpoint,
+            &repo.home_directory,
+            &password,
+            dir,
+            add_keys,
+            remove_keys,
+        )
+        .await;
+    hetzner
+        .reset_subaccount_password(box_id, id, &secrets::new_box_password())
+        .await?;
+    edited
 }
