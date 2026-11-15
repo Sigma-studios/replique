@@ -208,12 +208,58 @@ async fn start_run(
     let (run, created) = app.store.start_run(&run)?;
     if created {
         tracing::info!(device = %device.name, job = %start.job, kind = ?start.kind, run = %run.id, "run started");
+        close_superseded(&app, &run)?;
         crate::alerts::on_run_started(&app, &device, job_id).await;
         app.hub.publish(Event::Runs {
             device_id: device.id.clone(),
         });
     }
     Ok(Json(StartRunReply { run_id: run.id }))
+}
+
+/// What the server writes on a run it closed itself; a real report arriving
+/// later for that run (replayed from the device's spool) still replaces it.
+pub const SUPERSEDED: &str = "Stopped without reporting (the device restarted, or its app was updated or killed); a newer run of this job took over and continues from what was already uploaded.";
+
+/// A device runs a job's steps one after another (backup, then prune, then
+/// check), never two at once, so any run of the job starting means an older
+/// one still marked running is over. Closing it as interrupted now, rather
+/// than waiting hours to call it lost, keeps a phone update or a reboot from
+/// raising a "run lost" alert.
+fn close_superseded(app: &App, new: &Run) -> Result<(), ApiErr> {
+    for old in app.store.running_runs()? {
+        if old.id == new.id
+            || old.device_id != new.device_id
+            || old.job_id != new.job_id
+            || old.started_at > new.started_at
+        {
+            continue;
+        }
+        let finish = FinishRun {
+            status: RunStatus::Interrupted,
+            exit_code: 130,
+            finished_at: chrono::DateTime::from_timestamp(new.started_at, 0)
+                .unwrap_or_else(chrono::Utc::now),
+            summary: None,
+            prune: None,
+            check: None,
+            mirror: None,
+            errors: vec![],
+            error_count: 0,
+            unreadable_paths: vec![],
+            message: Some(SUPERSEDED.into()),
+        };
+        let raw = serde_json::to_string(&finish).map_err(|e| ApiErr::internal(e.into()))?;
+        app.store.finish_run(&old.id, &finish, &raw)?;
+        tracing::info!(run = %old.id, by = %new.id, "run closed: a newer run of its job started");
+    }
+    Ok(())
+}
+
+fn closed_by_server(run: &Run) -> bool {
+    run.finish
+        .as_ref()
+        .is_some_and(|f| f.message.as_deref() == Some(SUPERSEDED))
 }
 
 /// The run `id`, if it is this device's.
@@ -261,7 +307,8 @@ async fn finish(
         return Err(ApiErr::bad_request("A finished run cannot be `running`."));
     }
     let run = own_run(&app, &device.id, &id)?;
-    if run.status != RunStatus::Running && run.status != RunStatus::Lost {
+    if run.status != RunStatus::Running && run.status != RunStatus::Lost && !closed_by_server(&run)
+    {
         // A replay from the spool repeats what was sent; anything else is a
         // second, different ending.
         return if run.finish.as_ref() == Some(&finish) {

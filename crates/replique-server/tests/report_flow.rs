@@ -377,6 +377,33 @@ async fn device_added_paired_and_reporting() {
     other.status = RunStatus::Partial;
     assert_eq!(pc.finish(&run_id, &other).await, StatusCode::CONFLICT);
 
+    // A run that never reports (the phone's app updated mid-backup) is closed
+    // as interrupted when the next run of its job starts, not called lost
+    // hours later; its real report, if it turns up, still replaces that.
+    let silent = pc
+        .start(
+            "home",
+            RunKind::Backup,
+            &uuid(),
+            chrono::Utc::now() - chrono::Duration::minutes(10),
+        )
+        .await;
+    let next = pc
+        .start("home", RunKind::Backup, &uuid(), chrono::Utc::now())
+        .await;
+    let closed = server.app.store.run(&silent).unwrap().unwrap();
+    assert_eq!(closed.status, RunStatus::Interrupted);
+    assert_eq!(
+        server.app.store.run(&next).unwrap().unwrap().status,
+        RunStatus::Running
+    );
+    let late = finish(RunStatus::Interrupted, 130);
+    assert_eq!(pc.finish(&silent, &late).await, StatusCode::OK);
+    assert_eq!(
+        pc.finish(&next, &finish(RunStatus::Success, 0)).await,
+        StatusCode::OK
+    );
+
     let (_, overview) = browser.get("/fragments/overview").await;
     assert!(
         overview.contains("home") && overview.contains("Success"),
