@@ -7,6 +7,7 @@ pub mod config;
 pub mod excludes;
 pub mod mirror;
 pub mod mounts;
+pub mod netmeter;
 pub mod pair;
 pub mod report;
 pub mod restic;

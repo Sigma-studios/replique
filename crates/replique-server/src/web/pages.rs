@@ -105,7 +105,7 @@ fn progress_block(run: &Run) -> Markup {
         });
         return html! {
             div.progress.indeterminate role="progressbar" aria-label=(what) { span {} }
-            div.small.muted { (what) " · started " (fmt::ago(run.started_at)) }
+            div.small.muted { (what) " · started " (fmt::when(run.started_at)) }
         };
     }
     html! {
@@ -130,7 +130,7 @@ fn progress_block(run: &Run) -> Markup {
             }
             @if let Some(phase) = &p.phase { " · " (phase) }
             @if p.error_count > 0 { " · " (alerts::plural(p.error_count, "error")) }
-            @if run.progress.is_none() { " · started " (fmt::ago(run.started_at)) }
+            @if run.progress.is_none() { " · started " (fmt::when(run.started_at)) }
         }
         @if let Some(file) = p.current_files.first() {
             div.small.muted.mono style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title=(file) { (file) }
@@ -147,9 +147,15 @@ fn last_run_line(run: &Run) -> Markup {
         .map(|s| s.data_added_packed);
     html! {
         span.small.muted {
-            (run_kind(run.kind)) " " (fmt::ago(run.finished_at.unwrap_or(run.started_at)))
+            (run_kind(run.kind)) " " (fmt::when(run.finished_at.unwrap_or(run.started_at)))
             @if let Some(t) = took { " · took " (fmt::duration(t)) }
             @if let Some(a) = added { " · +" (fmt::bytes(a as i64)) }
+            @if let Some(t) = crate::transfer::of_run(run) {
+                " · " span title={
+                    (fmt::bytes(t.bytes as i64)) " in " (fmt::duration(t.secs as i64)) ", scanning included"
+                    @if let Some(p) = t.peak { "; peak " (fmt::bytes(p as i64)) "/s" }
+                } { (fmt::bytes(t.average() as i64)) "/s" }
+            }
         }
     }
 }
@@ -166,7 +172,7 @@ fn repo_size(app: &App, repo: Option<&Repository>) -> Markup {
         @match point {
             Some(p) => {
                 span { strong { (fmt::bytes(p.bytes)) } }
-                span.muted.small { (p.files.unwrap_or(0)) " files · measured " (fmt::ago(p.at)) }
+                span.muted.small { (p.files.unwrap_or(0)) " files · measured " (fmt::when(p.at)) }
             }
             None => span.muted.small { "Not measured yet" }
         }
@@ -253,7 +259,7 @@ fn box_card(app: &App) -> Markup {
                     div.small.muted {
                         "Data " (fmt::bytes(stats.size_data as i64)) " · snapshots " (fmt::bytes(stats.size_snapshots as i64))
                         @if let Some(left) = state.subaccounts_remaining() { " · " (left) " sub-accounts left" }
-                        @if let Some(at) = state.checked_at { " · checked " (fmt::ago(at)) }
+                        @if let Some(at) = state.checked_at { " · checked " (fmt::when(at)) }
                     }
                 }
                 _ => {
@@ -268,12 +274,164 @@ fn box_card(app: &App) -> Markup {
     }
 }
 
+/// A device's backups in one word, for the overview: an error still waiting
+/// for a backup after it, a scheduled job gone quiet past its interval, or
+/// up to date. A run in progress shows as such.
+enum DeviceState {
+    Pairing,
+    Revoked,
+    NoJobs,
+    Running(Run),
+    Error { job: String, run: Run },
+    Late { since: Option<i64> },
+    UpToDate { at: i64 },
+    NeverBackedUp,
+}
+
+fn is_error(status: RunStatus) -> bool {
+    matches!(
+        status,
+        RunStatus::Failed
+            | RunStatus::LockFailed
+            | RunStatus::WrongPassword
+            | RunStatus::RepositoryMissing
+            | RunStatus::Lost
+    )
+}
+
+fn device_state(app: &App, device: &Device) -> DeviceState {
+    if device.paired_at.is_none() {
+        return DeviceState::Pairing;
+    }
+    if device.revoked_at.is_some() {
+        return DeviceState::Revoked;
+    }
+    let jobs = app.store.jobs_of(&device.id).unwrap_or_default();
+    if jobs.is_empty() {
+        return DeviceState::NoJobs;
+    }
+    let now = db::now();
+    let at = |r: &Run| r.finished_at.unwrap_or(r.started_at);
+    let mut running = None;
+    let mut error: Option<(String, Run)> = None;
+    let mut late: Option<Option<i64>> = None;
+    let mut newest_good: Option<i64> = None;
+    for job in &jobs {
+        let runs = app.store.runs_of_job(job.id, 200).unwrap_or_default();
+        if let Some(r) = runs.iter().find(|r| r.status == RunStatus::Running) {
+            running = Some(r.clone());
+        }
+        // A backup job's backups, a mirror job's copies: what "a backup since"
+        // means for it. Its prunes and checks can still fail it.
+        let main = if job.kind == JobKind::Mirror {
+            RunKind::Mirror
+        } else {
+            RunKind::Backup
+        };
+        let good = runs
+            .iter()
+            .filter(|r| {
+                r.kind == main && matches!(r.status, RunStatus::Success | RunStatus::Partial)
+            })
+            .map(at)
+            .max();
+        newest_good = newest_good.max(good);
+        // An error stands until the job backs up again, or the kind of run
+        // that failed (a check, a prune) succeeds since.
+        let settled = |bad: &Run| {
+            // Times are in seconds: a success in the same second counts.
+            runs.iter().any(|r| {
+                r.id != bad.id
+                    && at(r) >= at(bad)
+                    && matches!(r.status, RunStatus::Success | RunStatus::Partial)
+                    && (r.kind == main || r.kind == bad.kind)
+            })
+        };
+        if let Some(bad) = runs
+            .iter()
+            .filter(|r| is_error(r.status) && !settled(r))
+            .max_by_key(|r| at(r))
+            && error.as_ref().is_none_or(|(_, e)| at(bad) > at(e))
+        {
+            error = Some((job.name.clone(), bad.clone()));
+        }
+        // Manual jobs (no interval) are never late.
+        if let Some(interval) = alerts::expected_interval(job) {
+            let last = good.unwrap_or(job.created_at);
+            if now - last > alerts::silent_after(interval) {
+                late = Some(late.flatten().min(good).or(good));
+            }
+        }
+    }
+    if let Some(r) = running {
+        return DeviceState::Running(r);
+    }
+    if let Some((job, run)) = error {
+        return DeviceState::Error { job, run };
+    }
+    if let Some(since) = late {
+        return DeviceState::Late { since };
+    }
+    match newest_good {
+        Some(at) => DeviceState::UpToDate { at },
+        None => DeviceState::NeverBackedUp,
+    }
+}
+
+fn device_state_cell(app: &App, device: &Device) -> Markup {
+    match device_state(app, device) {
+        DeviceState::Pairing => html! { span.status.warning { "Waiting for pairing" } },
+        DeviceState::Revoked => html! { span.status.critical { "Token revoked" } },
+        DeviceState::NoJobs => html! { span.status { "No job declared yet" } },
+        DeviceState::Running(r) => {
+            let p = r.progress.clone().unwrap_or_default();
+            html! {
+                span.status.running { (if r.kind == RunKind::Mirror { "Copying" } else { "Backing up" }) }
+                div.small.muted {
+                    @if r.progress.is_some() && p.percent_done > 0.0 { (fmt::percent(p.percent_done.clamp(0.0, 1.0))) }
+                    @else { "started " (fmt::when(r.started_at)) }
+                    @if let Some(rate) = p.upload_bytes_per_sec { " · ↑ " (fmt::bytes(rate as i64)) "/s" }
+                    @if let Some(left) = p.seconds_remaining { " · ETA " (fmt::duration(left as i64)) }
+                }
+            }
+        }
+        DeviceState::Error { job, run } => {
+            let reason = run
+                .finish
+                .as_ref()
+                .and_then(|f| {
+                    f.message
+                        .clone()
+                        .or_else(|| f.errors.first().map(|e| e.message.clone()))
+                })
+                .unwrap_or_else(|| status_view(run.status).1.to_string());
+            html! {
+                span.status.critical title=(reason) { "Error" }
+                div.small.muted title=(reason) {
+                    (job) " " (run_kind(run.kind)) " " (status_view(run.status).1.to_lowercase()) " "
+                    (fmt::when(run.finished_at.unwrap_or(run.started_at)))
+                }
+            }
+        }
+        DeviceState::Late { since } => html! {
+            @match since {
+                Some(at) => { span.status.warning { "No backup since " (fmt::when(at)) } }
+                None => { span.status.warning { "No backup yet" } }
+            }
+        },
+        DeviceState::UpToDate { at } => html! {
+            span.status.good { "Up to date" }
+            div.small.muted { "last backup " (fmt::when(at)) }
+        },
+        DeviceState::NeverBackedUp => html! { span.status { "No backup yet" } },
+    }
+}
+
 /// One row per sub-account: the device it belongs to (in its chart colour),
-/// the login, what is stored there, and every job with its last run, or its
-/// progress while it runs.
+/// the login, what is stored there, and the device's state. The whole row
+/// opens the device.
 fn account_row(app: &App, device: &Device, slot: usize) -> Markup {
     let repo = app.store.repository_of(&device.id).ok().flatten();
-    let jobs = job_views(app, &device.id).unwrap_or_default();
     let point = repo.as_ref().and_then(|r| {
         app.store
             .latest_measurement(&format!("repo:{}", r.id))
@@ -281,7 +439,7 @@ fn account_row(app: &App, device: &Device, slot: usize) -> Markup {
             .flatten()
     });
     html! {
-        tr {
+        tr data-href={ "/devices/" (device.id) } {
             td {
                 div.row style="gap: 0.45rem; flex-wrap: nowrap" {
                     i.swatch style={ "background: var(--series-" (slot % 8 + 1) ")" } {}
@@ -298,30 +456,10 @@ fn account_row(app: &App, device: &Device, slot: usize) -> Markup {
             td.num {
                 @if let Some(p) = &point {
                     strong { (fmt::bytes(p.bytes)) }
-                    div.small.muted { (p.files.unwrap_or(0)) " files · " (fmt::ago(p.at)) }
+                    div.small.muted { (p.files.unwrap_or(0)) " files · " (fmt::when(p.at)) }
                 } @else { span.muted.small { "not measured yet" } }
             }
-            td.jobs {
-                @if device.paired_at.is_none() {
-                    span.status.warning { "Waiting for pairing" } " " a.small href={ "/devices/" (device.id) } { "Show the code" }
-                } @else if device.revoked_at.is_some() {
-                    span.status.critical { "Token revoked" }
-                } @else if jobs.is_empty() {
-                    span.muted.small { "No job declared yet." }
-                }
-                @for v in &jobs {
-                    div.job {
-                        div.spread {
-                            strong { (v.job.name) }
-                            @if let Some(r) = &v.running { (status_chip(r.status)) }
-                            @else if let Some(r) = &v.last { (status_chip(r.status)) }
-                            @else { span.status { "Never run" } }
-                        }
-                        @if let Some(r) = &v.running { (progress_block(r)) }
-                        @else if let Some(r) = &v.last { div { (last_run_line(r)) } }
-                    }
-                }
-            }
+            td.state { (device_state_cell(app, device)) }
         }
     }
 }
@@ -340,7 +478,7 @@ fn overview_live(app: &App) -> anyhow::Result<Markup> {
                     p.muted { "No device yet. " a href="/devices/new" { "Add the first one" } "." }
                 } @else {
                     table.accounts {
-                        thead { tr { th { "Device" } th.hide-narrow { "Sub-account" } th.num { "Stored" } th { "Jobs" } } }
+                        thead { tr { th { "Device" } th.hide-narrow { "Sub-account" } th.num { "Stored" } th { "Status" } } }
                         // Rows keep the device list's order: the colour of a
                         // device is its place in that list, as in every chart.
                         tbody { @for (slot, d) in devices.iter().enumerate() { (account_row(app, d, slot)) } }
@@ -506,7 +644,7 @@ fn pairing_block(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup
                         div.qr { (super::qr_svg(&link)) }
                         div style="flex: 1; min-width: 240px" {
                             p { "Code " strong.mono style="font-size: 1.3rem" { (shown) } }
-                            p.small.muted { "Valid until " (fmt::datetime(code.expires_at)) " (" (fmt::ago(code.expires_at)) ")." }
+                            p.small.muted { "Valid until " (fmt::datetime(code.expires_at)) " (" (fmt::when(code.expires_at)) ")." }
                             @if device.kind == DeviceKind::Android {
                                 p { "Scan the QR code with the Réplique app." }
                             } @else if device.kind == DeviceKind::Facade {
@@ -586,7 +724,7 @@ fn source_broken_note(app: &App, job: &Job) -> Markup {
             }
             p.small style="margin: 0 0 0.3rem" {
                 @if let Some(at) = vouched {
-                    span.status.good { "Harmless" } " " (source) "'s check passed " (fmt::ago(at)) ", after they appeared: nothing uses them."
+                    span.status.good { "Harmless" } " " (source) "'s check passed " (fmt::when(at)) ", after they appeared: nothing uses them."
                 } @else {
                     span.status.warning { "Not settled yet" } " Seen since " (fmt::datetime(found.since)) ". " (source) "'s next passing check makes them harmless (a truncated pack in use would fail it); until then this copy does not count for “free up space”."
                 }
@@ -652,6 +790,15 @@ fn device_live(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup> 
                         }
                         @if let Some(r) = &v.running { (progress_block(r)) }
                         @if let Some(r) = &v.last { div { (last_run_line(r)) } }
+                        @if let Some(t) = crate::transfer::of_job(app, v.job.id, db::now() - 30 * 86_400) {
+                            p.small style="margin: 0.3rem 0" {
+                                "Transfer, last 30 days: average " strong { (fmt::bytes(t.average as i64)) "/s" }
+                                " · peak "
+                                @if let Some(p) = t.peak { strong { (fmt::bytes(p as i64)) "/s" } }
+                                @else { span.muted title="Runs before this was recorded, or a client that does not report what it sends" { "not recorded" } }
+                                span.muted { " · " (alerts::plural(t.runs as u64, "run")) }
+                            }
+                        }
                         p.small.muted {
                             "Schedule: " (v.job.schedule.as_deref().unwrap_or("manual"))
                             @if let Some(i) = alerts::expected_interval(&v.job) {
@@ -685,7 +832,7 @@ fn device_live(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup> 
                         tbody {
                             @for r in &runs {
                                 tr {
-                                    td title=(fmt::datetime(r.started_at)) { (fmt::ago(r.started_at)) }
+                                    td { (fmt::when(r.started_at)) }
                                     td { (job_names.get(&r.job_id).map(String::as_str).unwrap_or("?")) " " span.muted.small { (run_kind(r.kind)) } }
                                     td { (status_chip(r.status)) }
                                     td.num.hide-narrow { @if let Some(f) = r.finished_at { (fmt::duration(f - r.started_at)) } }
@@ -781,7 +928,7 @@ pub async fn device(
                 dl.kv.small style="margin-top: 0.5rem" {
                     dt { "Paired" } dd { @if let Some(p) = device.paired_at { (fmt::datetime(p)) } @else { "not yet" } }
                     @if let Some(v) = &device.client_version { dt { "Client" } dd { (v) } }
-                    @if let Some(s) = device.last_seen_at { dt { "Last report" } dd { (fmt::ago(s)) } }
+                    @if let Some(s) = device.last_seen_at { dt { "Last report" } dd { (fmt::when(s)) } }
                     @if let Some(repo) = &repo {
                         @if device.kind == DeviceKind::Facade {
                             dt { "Offsite copy" } dd { span.mono { (format!("sftp:{}@{}:{}", repo.username, repo.host, repo.repo_path)) } " (port " (repo.port) "), in façade's own encrypted format" }
@@ -1049,7 +1196,7 @@ pub async fn rules_form(
             (flash(&f))
             h1 { "Phone rules · " (device.name) }
             p.muted { "What the app backs up and when; it fetches these with " code { "GET /api/v1/device/config" } ". "
-                @if let Some(at) = edited { "Edited " (fmt::ago(at)) "." } @else { "These are the defaults." } }
+                @if let Some(at) = edited { "Edited " (fmt::when(at)) "." } @else { "These are the defaults." } }
             form method="post" action={ "/devices/" (device.id) "/rules" } {
                 (csrf_field(&ctx))
                 div.card {
@@ -1446,7 +1593,7 @@ fn problems_list(app: &App, ctx: &Ctx) -> anyhow::Result<Markup> {
                     }
                     @if !a.detail.is_empty() { pre.small style="margin-top: 0.4rem" { (a.detail) } }
                     div.actions.small style="margin-top: 0.4rem" {
-                        span.muted { "since " (fmt::ago(a.opened_at)) }
+                        span.muted { "since " (fmt::when(a.opened_at)) }
                         @if let Some(d) = &a.device_id { a href={ "/devices/" (d) } { "device" } }
                         @if a.kind == "drift" || a.kind == "run_lost" || a.kind == "run_partial" {
                             form method="post" action={ "/problems/" (a.id) "/dismiss" } {
@@ -1468,7 +1615,7 @@ fn problems_list(app: &App, ctx: &Ctx) -> anyhow::Result<Markup> {
                     table {
                         tbody {
                             @for a in &cleared {
-                                tr { td { (a.title) } td.small.muted { (fmt::ago(a.cleared_at.unwrap_or(a.opened_at))) } }
+                                tr { td { (a.title) } td.small.muted { (fmt::when(a.cleared_at.unwrap_or(a.opened_at))) } }
                             }
                         }
                     }
@@ -1576,7 +1723,7 @@ pub async fn settings(
                         }
                     }
                     @if let Some(e) = &state.error { dt { "Last error" } dd { (e) } }
-                    @if let Some(at) = state.checked_at { dt { "Checked" } dd { (fmt::ago(at)) } }
+                    @if let Some(at) = state.checked_at { dt { "Checked" } dd { (fmt::when(at)) } }
                 }
             }
             h2 { "How Réplique reaches the box" }
@@ -1622,7 +1769,7 @@ pub async fn settings(
                 }
                 p.small.muted {
                     @if let Some(e) = &notify_error { "Last delivery failed: " (e) ". " }
-                    @if let Some(at) = notify_sent { "Last message delivered " (fmt::ago(at)) "." }
+                    @if let Some(at) = notify_sent { "Last message delivered " (fmt::when(at)) "." }
                 }
                 form.stack method="post" action="/settings/thresholds" style="margin-top: 1rem" {
                     (csrf_field(&ctx))

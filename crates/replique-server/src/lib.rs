@@ -20,6 +20,7 @@ pub mod restore;
 pub mod secrets;
 pub mod ssh;
 pub mod storage;
+pub mod transfer;
 pub mod web;
 
 use std::collections::HashMap;

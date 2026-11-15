@@ -137,11 +137,17 @@ fn backup(
     args.extend(job.paths.iter().cloned());
 
     let mut summary: Option<BackupSummary> = None;
+    let mut meter = crate::netmeter::UploadMeter::new();
     let outcome = restic.stream(&args, stop, |v: Value| {
         match v.get("message_type").and_then(Value::as_str) {
             Some("status") => {
                 if let Ok(s) = serde_json::from_value::<Status>(v) {
-                    reporter.progress(&mut run, progress_of(s));
+                    let mut p = progress_of(s);
+                    if let Some((sent, rate)) = meter.read() {
+                        p.bytes_uploaded = Some(sent);
+                        p.upload_bytes_per_sec = rate;
+                    }
+                    reporter.progress(&mut run, p);
                 }
             }
             Some("summary") => summary = serde_json::from_value(v).ok(),
@@ -200,9 +206,8 @@ fn progress_of(s: Status) -> Progress {
         error_count: s.error_count,
         current_files: s.current_files.unwrap_or_default(),
         phase: None,
-        // restic does not say what it sent, and the network counters of a
-        // computer are shared with everything else running on it; the website
-        // shows the rate restic reads at instead.
+        // Filled in by the caller from the job unit's IP accounting, where
+        // there is one (see `netmeter`).
         bytes_uploaded: None,
         upload_bytes_per_sec: None,
     }

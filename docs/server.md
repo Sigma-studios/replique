@@ -197,6 +197,21 @@ These environment variables override the file (a missing file is then fine):
 | `REPLIQUE_KEY_INSTALL` | `storage_box.key_install` |
 | `REPLIQUE_LOG` | log filter, e.g. `info` or `debug,russh=warn` (logs go to stderr) |
 
+## What the website shows
+
+* **Overview:** the Storage Box, split by device; then a row per sub-account
+  with one status: *Up to date* (with the last backup), *No backup since …* (a
+  scheduled job past its interval plus the silent-job margin), *Error* (a run of
+  one of its jobs failed and neither a backup nor a successful run of the same
+  kind came since), or *Backing up* with its progress. A row opens its device.
+  Under it, the stacked storage chart with its time range.
+* **Transfer speeds:** each run line shows its average (bytes sent over the
+  whole run, scanning included); each job's card shows the average and the peak
+  over 30 days. Peaks are noted as progress comes in: from the phone's and the
+  PC's own network counters, and from a mirror's copy step. Runs from before
+  this, or from a client that does not count, have an average only.
+* **Times:** every relative time ("5 min ago") shows the exact time when hovered.
+
 ## Operating notes
 
 **What is measured.** Every `every_secs`: the whole box from Hetzner's API

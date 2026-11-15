@@ -349,7 +349,8 @@ async fn device_added_paired_and_reporting() {
     assert_eq!(r.status(), StatusCode::OK);
     let (_, overview) = browser.get("/fragments/overview").await;
     assert!(
-        overview.contains("Running") && overview.contains("ETA 14 s"),
+        // One status per device: a run in progress, with its ETA.
+        overview.contains("Backing up") && overview.contains("ETA 14 s"),
         "{overview}"
     );
 
@@ -441,7 +442,10 @@ async fn device_added_paired_and_reporting() {
 
     let (_, overview) = browser.get("/fragments/overview").await;
     assert!(
-        overview.contains("home") && overview.contains("Success"),
+        // One status per device, not its jobs; the row opens the device.
+        overview.contains("Up to date")
+            && overview.contains("last backup")
+            && overview.contains(&format!("data-href=\"/devices/{pc_id}\"")),
         "{overview}"
     );
     let (_, page) = browser.get(&format!("/devices/{pc_id}")).await;
@@ -619,14 +623,50 @@ async fn device_added_paired_and_reporting() {
     let b2 = phone
         .start("phone", RunKind::Backup, &uuid(), at - minutes(20))
         .await;
+    // The phone reports what it really sends: that rate is the run's peak.
+    let sending = Progress {
+        at: at - minutes(19),
+        percent_done: 0.5,
+        total_bytes: 900_000_000,
+        bytes_done: 450_000_000,
+        bytes_uploaded: Some(270_000_000),
+        upload_bytes_per_sec: Some(9_000_000),
+        ..Progress::default()
+    };
+    let r = phone
+        .send(reqwest::Method::POST, &paths::run_progress(&b2), &sending)
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
     let mut done2 = finish(RunStatus::Success, 0);
     done2.finished_at = at - minutes(19);
     done2.summary = Some(BackupSummary {
         snapshot_id: Some(newer.clone()),
         backup_start: Some(at - minutes(20)),
+        total_duration: 60.0,
+        data_added_packed: 260_000_000,
         ..BackupSummary::default()
     });
     assert_eq!(phone.finish(&b2, &done2).await, StatusCode::OK);
+    let recorded = server.app.store.run(&b2).unwrap().unwrap();
+    assert_eq!(recorded.peak_bps, Some(9_000_000));
+    assert_eq!(recorded.sent_bytes, Some(270_000_000));
+    // Its average: what it sent over its duration (270 MB in 60 s).
+    let (_, phone_page) = browser.get(&format!("/devices/{phone_id}")).await;
+    assert!(phone_page.contains("4.5 MB/s"), "the run's average");
+    assert!(
+        phone_page.contains("Transfer, last 30 days"),
+        "the job's figures"
+    );
+    assert!(phone_page.contains("9.0 MB/s"), "the job's peak");
+    // Every relative time shows the exact time when hovered.
+    assert!(
+        phone_page.contains("<time datetime=\""),
+        "relative times carry their exact time"
+    );
+    assert!(
+        !phone_page.contains(" ago</td>"),
+        "no bare relative time in the runs table"
+    );
     let check_of = |ids: Vec<String>, at| {
         let mut f = finish(RunStatus::Success, 0);
         f.finished_at = at;
@@ -1339,4 +1379,27 @@ async fn source_breakage_unchecked_escalates() {
         safe.snapshot.map(|s| s.mirrored_at.timestamp()),
         Some((now - days(4)).timestamp())
     );
+
+    // On the overview: a backup failing after the last good one is an error
+    // for the device until a backup succeeds again.
+    let failed_at = now + chrono::Duration::minutes(2);
+    let b2 = phone
+        .start("phone", RunKind::Backup, &uuid(), failed_at)
+        .await;
+    let mut failed = finish(RunStatus::Failed, 1);
+    failed.finished_at = failed_at;
+    failed.message = Some("network unreachable".into());
+    assert_eq!(phone.finish(&b2, &failed).await, StatusCode::OK);
+    let (_, overview) = browser.get("/fragments/overview").await;
+    assert!(
+        overview.contains(">Error<") && overview.contains("network unreachable"),
+        "{overview}"
+    );
+    let later = failed_at + chrono::Duration::minutes(5);
+    let b3 = phone.start("phone", RunKind::Backup, &uuid(), later).await;
+    let mut ok = finish(RunStatus::Success, 0);
+    ok.finished_at = later + chrono::Duration::minutes(1);
+    assert_eq!(phone.finish(&b3, &ok).await, StatusCode::OK);
+    let (_, overview) = browser.get("/fragments/overview").await;
+    assert!(!overview.contains(">Error<"), "{overview}");
 }

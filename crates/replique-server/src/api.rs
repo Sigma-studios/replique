@@ -204,6 +204,8 @@ async fn start_run(
         exit_code: None,
         restic_version: start.restic_version.clone(),
         client_version: start.client_version.clone(),
+        peak_bps: None,
+        sent_bytes: None,
     };
     let (run, created) = app.store.start_run(&run)?;
     if created {
@@ -287,7 +289,13 @@ async fn progress(
         .progress_at
         .is_some_and(|at| db::now() - at < (replique_proto::PROGRESS_MIN_INTERVAL_SECS as i64) / 2);
     if run.status == RunStatus::Running && !too_soon {
+        // Before the report replaces the previous one: a mirror's rate is the
+        // difference between the two.
+        let (rate, sent) = crate::transfer::sample(&run, &progress);
         app.store.set_progress(&id, &progress)?;
+        if rate.is_some() || sent.is_some() {
+            app.store.record_transfer(&id, rate, sent)?;
+        }
         app.hub.publish(Event::Runs {
             device_id: device.id.clone(),
         });

@@ -294,7 +294,10 @@ Names are 1 to 64 of `a-z`, `0-9`, `-`, `_`.
   (inside `systemd-inhibit --what=sleep --mode=block` with `inhibitSleep`),
   restic's cache in `/var/cache/replique-<name>`, `Nice=` and idle I/O as
   set; not restarted by `nixos-rebuild switch`, so a running backup survives a
-  rebuild. Plus `replique-<name>.timer` when `schedule` is set.
+  rebuild; `IPAccounting=yes`, from which the client reports what the backup
+  really uploads (restic only says what it read), so the website shows its
+  upload rate and each job's peak. Plus `replique-<name>.timer` when
+  `schedule` is set.
 * `replique-<name>` commands: restic on the job's repository.
 * The `replique-client` system user and group, the state directory
   (`2770`), and `Include <stateDir>/ssh/include.conf` in `/etc/ssh/ssh_config` (the

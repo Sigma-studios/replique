@@ -484,6 +484,10 @@ in
             );
             CacheDirectory = "replique-${name}";
             CacheDirectoryMode = "0700";
+            # Counts the job's own traffic: restic reports what it read, not
+            # what it uploaded, and the client turns this counter into the
+            # upload rate and peak the website shows.
+            IPAccounting = true;
             # On shutdown the client waits for restic to stop and reports the run
             # interrupted (spooled if the network is already gone).
             TimeoutStopSec = "2min";

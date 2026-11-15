@@ -176,6 +176,8 @@ mod tests {
             exit_code: Some(0),
             restic_version: None,
             client_version: None,
+            peak_bps: None,
+            sent_bytes: None,
         }
     }
 

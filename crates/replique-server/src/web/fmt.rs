@@ -48,6 +48,15 @@ pub fn datetime(secs: i64) -> String {
     db::to_time(secs).format("%Y-%m-%d %H:%M UTC").to_string()
 }
 
+/// A relative time ("5 min ago") that shows the exact time when hovered. The
+/// site's rule for every relative time: "ago" alone cannot be placed.
+pub fn when(secs: i64) -> maud::Markup {
+    let exact = db::to_time(secs);
+    maud::html! {
+        time datetime=(exact.to_rfc3339()) title=(exact.format("%Y-%m-%d %H:%M:%S UTC").to_string()) { (ago(secs)) }
+    }
+}
+
 pub fn ago(secs: i64) -> String {
     let d = db::now() - secs;
     if d < 0 {

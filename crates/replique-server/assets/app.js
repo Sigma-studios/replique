@@ -60,6 +60,16 @@
     });
   });
 
+  // Table rows with data-href open it, except where a click means something
+  // else (a link, a button, selecting text). Cmd/Ctrl-click opens a new tab.
+  document.addEventListener("click", function (e) {
+    var row = e.target.closest("tr[data-href]");
+    if (!row || e.target.closest("a, button, input, select, textarea, summary, label")) return;
+    if (window.getSelection && String(window.getSelection())) return;
+    if (e.metaKey || e.ctrlKey) window.open(row.dataset.href);
+    else location.href = row.dataset.href;
+  });
+
   // Copy buttons: <button data-copy="text">.
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-copy]");

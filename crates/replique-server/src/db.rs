@@ -20,7 +20,8 @@ pub struct Store(Mutex<Connection>);
 
 /// Each entry runs once, in order; `PRAGMA user_version` remembers how many
 /// have. Never edit an entry that shipped: add another.
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
 CREATE TABLE owners (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -152,7 +153,15 @@ CREATE TABLE host_keys (
     first_seen INTEGER NOT NULL,
     PRIMARY KEY (host, port)
 );
-"#];
+"#,
+    r#"
+-- The fastest transfer seen in a run's progress (bytes per second), and the
+-- bytes it sent: only the latest progress is kept, so a peak must be noted as
+-- it goes by.
+ALTER TABLE runs ADD COLUMN peak_bps INTEGER;
+ALTER TABLE runs ADD COLUMN sent_bytes INTEGER;
+"#,
+];
 
 pub fn now() -> i64 {
     chrono::Utc::now().timestamp()
@@ -340,11 +349,18 @@ pub struct Run {
     pub exit_code: Option<i32>,
     pub restic_version: Option<String>,
     pub client_version: Option<String>,
+    /// The fastest transfer its progress showed, in bytes per second.
+    pub peak_bps: Option<i64>,
+    /// Bytes it sent over the network (or copied, for a mirror), as reported.
+    pub sent_bytes: Option<i64>,
 }
 
 const RUN_COLUMNS: &str = "id, device_id, job_id, client_run_id, kind, status, started_at, \
      received_at, finished_at, progress, progress_at, finish, exit_code, restic_version, \
-     client_version";
+     client_version, peak_bps, sent_bytes";
+/// How many columns `RUN_COLUMNS` has: a query adding its own after them
+/// reads those from this index on.
+const RUN_COLUMN_COUNT: usize = 17;
 
 fn run_row(r: &Row) -> rusqlite::Result<Run> {
     let kind: String = r.get(4)?;
@@ -367,6 +383,8 @@ fn run_row(r: &Row) -> rusqlite::Result<Run> {
         exit_code: r.get(12)?,
         restic_version: r.get(13)?,
         client_version: r.get(14)?,
+        peak_bps: r.get(15)?,
+        sent_bytes: r.get(16)?,
     })
 }
 
@@ -927,6 +945,25 @@ impl Store {
         Ok(())
     }
 
+    /// Notes a transfer sample of a running run: the peak only ever rises,
+    /// and so does the byte count.
+    pub fn record_transfer(
+        &self,
+        id: &str,
+        rate: Option<i64>,
+        sent: Option<i64>,
+    ) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute(
+            "UPDATE runs SET \
+               peak_bps = CASE WHEN ?2 IS NULL THEN peak_bps ELSE MAX(COALESCE(peak_bps, 0), ?2) END, \
+               sent_bytes = CASE WHEN ?3 IS NULL THEN sent_bytes ELSE MAX(COALESCE(sent_bytes, 0), ?3) END \
+             WHERE id = ?1",
+            params![id, rate, sent],
+        )?;
+        Ok(())
+    }
+
     pub fn finish_run(&self, id: &str, finish: &FinishRun, raw: &str) -> anyhow::Result<()> {
         let conn = self.0.lock();
         conn.execute(
@@ -1002,7 +1039,9 @@ impl Store {
                 .collect::<Vec<_>>()
                 .join(", ")
         ))?;
-        let rows = stmt.query_map([], |r| Ok((run_row(r)?, r.get::<_, String>(15)?)))?;
+        let rows = stmt.query_map([], |r| {
+            Ok((run_row(r)?, r.get::<_, String>(RUN_COLUMN_COUNT)?))
+        })?;
         let mut out = Vec::new();
         for row in rows {
             let (run, name) = row?;
