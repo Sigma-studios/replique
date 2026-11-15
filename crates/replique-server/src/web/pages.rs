@@ -91,6 +91,23 @@ fn job_views(app: &App, device_id: &str) -> anyhow::Result<Vec<JobView>> {
 fn progress_block(run: &Run) -> Markup {
     let p = run.progress.clone().unwrap_or_default();
     let pct = p.percent_done.clamp(0.0, 1.0);
+    // Some runs cannot say how far along they are (a structure-only check, a
+    // prune, a run that has not reported yet): a bar frozen at 0% reads as
+    // stuck, so they get a moving bar, their phase and how long it has run.
+    let unknown =
+        run.progress.is_none() || (pct == 0.0 && p.total_bytes == 0 && p.total_files == 0);
+    if unknown {
+        let what = p.phase.clone().unwrap_or_else(|| match run.kind {
+            RunKind::Check => "checking the repository".into(),
+            RunKind::Prune => "pruning".into(),
+            RunKind::Mirror => "copying".into(),
+            RunKind::Backup => "starting".into(),
+        });
+        return html! {
+            div.progress.indeterminate role="progressbar" aria-label=(what) { span {} }
+            div.small.muted { (what) " · started " (fmt::ago(run.started_at)) }
+        };
+    }
     html! {
         div.progress role="progressbar" aria-valuenow=(format!("{:.0}", pct * 100.0)) aria-valuemin="0" aria-valuemax="100" {
             span style={ "width: " (format!("{:.1}", pct * 100.0)) "%" } {}
@@ -173,6 +190,26 @@ fn box_card(app: &App) -> Markup {
         alerts::SETTING_BOX_ALERT,
         app.config.alerts.box_alert_percent,
     );
+    // What fills the box: each device's repository as last measured, in the
+    // colour that device has in every chart (its place in the device list),
+    // then whatever else is there (files outside Réplique's repositories, the
+    // box's own snapshots).
+    let devices = app.store.devices().unwrap_or_default();
+    let mut parts: Vec<(String, usize, i64)> = Vec::new();
+    for (slot, device) in devices.iter().enumerate() {
+        let Some(repo) = app.store.repository_of(&device.id).ok().flatten() else {
+            continue;
+        };
+        if let Some(p) = app
+            .store
+            .latest_measurement(&format!("repo:{}", repo.id))
+            .ok()
+            .flatten()
+            && p.bytes > 0
+        {
+            parts.push((device.name.clone(), slot % 8 + 1, p.bytes));
+        }
+    }
     html! {
         div.card {
             div.spread {
@@ -182,13 +219,36 @@ fn box_card(app: &App) -> Markup {
             @match state.info.as_ref().and_then(|b| b.stats.map(|s| (s, b.storage_box_type.size))) {
                 Some((stats, quota)) if quota > 0 => {
                     @let fraction = stats.size as f64 / quota as f64;
-                    @let class = if fraction * 100.0 >= alert as f64 { "gauge critical" } else if fraction * 100.0 >= warn as f64 { "gauge warning" } else { "gauge" };
+                    @let used = stats.size as i64;
+                    @let measured: i64 = parts.iter().map(|p| p.2).sum();
+                    // Measurements run on their own schedule and count file
+                    // sizes, so they can briefly add up to more than the API's
+                    // figure: scale them to it rather than overflow the bar.
+                    @let scale = if measured > used && measured > 0 { used as f64 / measured as f64 } else { 1.0 };
+                    @let other = (used - measured).max(0);
+                    @let width = |bytes: i64, s: f64| format!("{:.2}", (bytes as f64 * s / quota as f64 * 100.0).min(100.0));
                     div.row {
                         span.hero { (fmt::percent(fraction)) }
-                        span.muted { (fmt::bytes(stats.size as i64)) " of " (fmt::bytes(quota as i64)) }
+                        span.muted { (fmt::bytes(used)) " of " (fmt::bytes(quota as i64)) }
+                        @if fraction * 100.0 >= alert as f64 { span.status.critical { "Above " (alert) "%" } }
+                        @else if fraction * 100.0 >= warn as f64 { span.status.warning { "Above " (warn) "%" } }
                     }
-                    div class=(class) role="meter" aria-valuenow=(format!("{:.0}", fraction * 100.0)) aria-valuemin="0" aria-valuemax="100" aria-label="Storage Box usage" {
-                        span style={ "width: " (format!("{:.1}", (fraction * 100.0).min(100.0))) "%" } {}
+                    div.gauge.stacked role="meter" aria-valuenow=(format!("{:.0}", fraction * 100.0)) aria-valuemin="0" aria-valuemax="100" aria-label="Storage Box usage" {
+                        @for (name, slot, bytes) in &parts {
+                            span style={ "width: " (width(*bytes, scale)) "%; background: var(--series-" (slot) ")" } title={ (name) ": " (fmt::bytes(*bytes)) } {}
+                        }
+                        @if other > 0 {
+                            span.other style={ "width: " (width(other, 1.0)) "%" } title={ "Other: " (fmt::bytes(other)) " (files outside Réplique's repositories, and the box's own snapshots)" } {}
+                        }
+                    }
+                    div.legend.small {
+                        @for (name, slot, bytes) in &parts {
+                            span { i.swatch style={ "background: var(--series-" (slot) ")" } {} (name) " " span.muted { (fmt::bytes(*bytes)) } }
+                        }
+                        @if other > 0 {
+                            span title="Files outside Réplique's repositories, and the box's own snapshots" { i.swatch.other {} "Other " span.muted { (fmt::bytes(other)) } }
+                        }
+                        span { i.swatch.free {} "Free " span.muted { (fmt::bytes((quota as i64 - used).max(0))) } }
                     }
                     div.small.muted {
                         "Data " (fmt::bytes(stats.size_data as i64)) " · snapshots " (fmt::bytes(stats.size_snapshots as i64))

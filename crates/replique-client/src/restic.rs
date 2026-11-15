@@ -233,6 +233,53 @@ impl Restic {
         outcome
     }
 
+    /// Runs restic and hands each line of its standard output to `on_line`,
+    /// splitting on carriage returns too: restic redraws its progress line in
+    /// place with `\r`, and each redraw is a fresh reading.
+    pub fn stream_text(
+        &self,
+        args: &[String],
+        stop: &Stop,
+        mut on_line: impl FnMut(&str),
+    ) -> Outcome {
+        let mut cmd = self.command(args);
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => return spawn_failure(&self.binary, e),
+        };
+        let stderr = child.stderr.take().expect("piped");
+        let collector = std::thread::spawn(move || collect_stderr(stderr));
+        let mut stdout = BufReader::new(child.stdout.take().expect("piped"));
+        let mut buf = Vec::new();
+        let mut byte = [0u8; 1];
+        while let Ok(1) = std::io::Read::read(&mut stdout, &mut byte) {
+            if byte[0] == b'\n' || byte[0] == b'\r' {
+                if !buf.is_empty() {
+                    on_line(&String::from_utf8_lossy(&buf));
+                    buf.clear();
+                }
+            } else {
+                buf.push(byte[0]);
+            }
+        }
+        if !buf.is_empty() {
+            on_line(&String::from_utf8_lossy(&buf));
+        }
+        let status = child.wait();
+        let mut outcome = collector.join().unwrap_or_default();
+        outcome.code = match status {
+            Ok(s) => exit_code(s),
+            Err(_) => 1,
+        };
+        if stop.requested() && outcome.code != 0 {
+            outcome.code = 130;
+        }
+        outcome
+    }
+
     /// Runs restic and returns its standard output, for commands whose output
     /// is one JSON document (`snapshots --json`, `forget --json`).
     pub fn output(&self, args: &[String]) -> Result<Vec<u8>, Outcome> {

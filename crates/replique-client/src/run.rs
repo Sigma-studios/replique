@@ -277,33 +277,66 @@ fn check(reporter: &Reporter, restic: &Restic, subset: &str, stop: &Stop) -> i32
             return o.code;
         }
     };
+    let reading = format!("reading back {subset} of the data");
     reporter.progress(
         &mut run,
         Progress {
             at: Utc::now(),
-            phase: Some(format!("reading back {subset} of the data")),
+            phase: Some("checking snapshots and trees".into()),
             ..Progress::default()
         },
     );
+    // Without --json: in JSON mode restic check prints no progress at all,
+    // only its summary, so the website could show nothing but a bar stuck at
+    // 0% for what can take an hour. Its text output has phase lines and
+    // `[0:12] 45.00%  9 / 20 packs` progress lines (RESTIC_PROGRESS_FPS is set
+    // by `Restic::command`); errors are judged by the exit code.
     let args: Vec<String> = vec![
         "--retry-lock".into(),
         RETRY_LOCK.into(),
         "check".into(),
-        "--json".into(),
         format!("--read-data-subset={subset}"),
     ];
-    let mut num_errors = 0;
-    let outcome = restic.stream(&args, stop, |v| {
-        if v.get("message_type").and_then(Value::as_str) == Some("summary") {
-            num_errors = v.get("num_errors").and_then(Value::as_u64).unwrap_or(0);
+    let started = std::time::Instant::now();
+    let mut stage = CheckStage::Structure;
+    let mut error_lines = 0u64;
+    let outcome = restic.stream_text(&args, stop, |line| match parse_check_line(line) {
+        CheckLine::ReadingData => stage = CheckStage::Data,
+        CheckLine::Progress {
+            fraction,
+            done,
+            total,
+        } => {
+            let overall = match stage {
+                CheckStage::Structure => 0.1 * fraction,
+                CheckStage::Data => 0.1 + 0.9 * fraction,
+            };
+            reporter.progress(
+                &mut run,
+                Progress {
+                    at: Utc::now(),
+                    percent_done: overall,
+                    seconds_elapsed: started.elapsed().as_secs(),
+                    files_done: done,
+                    total_files: total,
+                    phase: Some(match stage {
+                        CheckStage::Structure => "checking snapshots and trees".into(),
+                        CheckStage::Data => reading.clone(),
+                    }),
+                    ..Progress::default()
+                },
+            );
         }
+        CheckLine::Error => error_lines += 1,
+        CheckLine::Other => {}
     });
-    // restic 0.19 prints a summary with `num_errors: 1` even when it could not
-    // lock the repository and checked nothing (exit 11); only a check that ran
-    // (exit 0, or 1 for errors found) has a count worth reporting.
-    if !matches!(outcome.code, 0 | 1) {
-        num_errors = 0;
-    }
+    // Exit 1 is "errors found"; any other failure (locked, network) means the
+    // check did not run and says nothing about the repository's integrity.
+    let num_errors = if outcome.code == 1 {
+        error_lines.max(1)
+    } else {
+        0
+    };
     let finish = FinishRun {
         check: Some(CheckSummary {
             read_data_subset: Some(subset.to_string()),
@@ -319,4 +352,105 @@ fn check(reporter: &Reporter, restic: &Restic, subset: &str, stop: &Stop) -> i32
     );
     reporter.finish(run, finish);
     outcome.code
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum CheckStage {
+    Structure,
+    Data,
+}
+
+#[derive(PartialEq, Debug)]
+enum CheckLine {
+    /// `read 5.0% of packfiles`, `read all data`: the data pass begins.
+    ReadingData,
+    /// `[1:02] 45.00%  9 / 20 packs` (or `snapshots`).
+    Progress {
+        fraction: f64,
+        done: u64,
+        total: u64,
+    },
+    /// A line restic prints for a problem it found.
+    Error,
+    Other,
+}
+
+fn parse_check_line(line: &str) -> CheckLine {
+    let line = line.trim();
+    if line.starts_with("read ") && (line.ends_with("of packfiles") || line.contains("all data")) {
+        return CheckLine::ReadingData;
+    }
+    if let Some(rest) = line.strip_prefix('[')
+        && let Some((_, rest)) = rest.split_once(']')
+    {
+        let mut parts = rest.split_whitespace();
+        let percent = parts
+            .next()
+            .and_then(|p| p.strip_suffix('%')?.parse::<f64>().ok());
+        let done = parts.next().and_then(|d| d.parse::<u64>().ok());
+        let slash = parts.next();
+        let total = parts.next().and_then(|t| t.parse::<u64>().ok());
+        if let (Some(p), Some(done), Some("/"), Some(total)) = (percent, done, slash, total) {
+            return CheckLine::Progress {
+                fraction: (p / 100.0).clamp(0.0, 1.0),
+                done,
+                total,
+            };
+        }
+    }
+    let lower = line.to_ascii_lowercase();
+    if (lower.starts_with("error") || lower.contains(" error:") || lower.starts_with("pack "))
+        && !lower.contains("no errors")
+    {
+        return CheckLine::Error;
+    }
+    CheckLine::Other
+}
+
+#[cfg(test)]
+mod check_output_tests {
+    use super::*;
+
+    #[test]
+    fn check_lines() {
+        assert_eq!(
+            parse_check_line("read 5.0% of packfiles"),
+            CheckLine::ReadingData
+        );
+        assert_eq!(parse_check_line("read all data"), CheckLine::ReadingData);
+        assert_eq!(
+            parse_check_line("[1:02] 45.00%  9 / 20 packs"),
+            CheckLine::Progress {
+                fraction: 0.45,
+                done: 9,
+                total: 20
+            }
+        );
+        assert_eq!(
+            parse_check_line("[0:00] 100.00%  1 / 1 snapshots"),
+            CheckLine::Progress {
+                fraction: 1.0,
+                done: 1,
+                total: 1
+            }
+        );
+        assert_eq!(
+            parse_check_line("[12:03:44] 3.10%  31 / 1000 packs"),
+            CheckLine::Progress {
+                fraction: 0.031,
+                done: 31,
+                total: 1000
+            }
+        );
+        assert_eq!(parse_check_line("no errors were found"), CheckLine::Other);
+        assert_eq!(
+            parse_check_line("error: load <data/8c5f2a3b>: invalid data returned"),
+            CheckLine::Error
+        );
+        assert_eq!(
+            parse_check_line("check snapshots, trees and blobs"),
+            CheckLine::Other
+        );
+        assert_eq!(parse_check_line("load indexes"), CheckLine::Other);
+    }
 }

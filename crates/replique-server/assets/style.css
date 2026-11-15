@@ -85,10 +85,24 @@ footer { max-width: 1100px; margin: 2rem auto; padding: 0 1rem 2rem; color: var(
 
 .progress { height: 8px; background: var(--grid); border-radius: 4px; overflow: hidden; margin: 0.4rem 0 0.2rem; }
 .progress > span { display: block; height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.6s; }
+/* A run that cannot say how far along it is: a segment sweeping across. */
+.progress.indeterminate > span { width: 35%; animation: sweep 1.6s ease-in-out infinite; }
+@keyframes sweep { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .progress.indeterminate > span { animation-duration: 4s; } }
 .gauge { height: 14px; background: var(--grid); border-radius: 7px; overflow: hidden; margin: 0.4rem 0; }
 .gauge > span { display: block; height: 100%; background: var(--series-1); border-radius: 7px; }
 .gauge.warning > span { background: var(--warning); }
 .gauge.critical > span { background: var(--critical); }
+/* The box split by what fills it: one segment per device, then "other", the
+   track as free space. Each segment ends in a 2px surface gap. */
+.gauge.stacked { display: flex; }
+.gauge.stacked > span { flex: none; border-radius: 0; box-shadow: inset -2px 0 0 var(--surface); min-width: 3px; }
+.gauge.stacked > span.other { background: var(--text-3); }
+.legend { display: flex; flex-wrap: wrap; gap: 0.3rem 0.9rem; margin: 0.2rem 0 0.4rem; color: var(--text-2); }
+.legend > span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.swatch { display: inline-block; width: 0.7rem; height: 0.7rem; border-radius: 3px; }
+.swatch.other { background: var(--text-3); }
+.swatch.free { background: var(--grid); box-shadow: inset 0 0 0 1px var(--border); }
 .hero { font-size: 1.8rem; font-weight: 700; }
 
 table { width: 100%; border-collapse: collapse; }
