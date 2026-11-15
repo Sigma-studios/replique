@@ -239,25 +239,41 @@ pub async fn install_key_with_command(conn: &Connection, keys: &[String]) -> any
     Ok(())
 }
 
-/// Adds `keys` to `.ssh/authorized_keys` in the account's home over SFTP,
-/// keeping the keys already there. Merging rather than replacing matters if
-/// two sub-accounts share a home (the read-only twin): they may then share
-/// this file too, and replacing it would lock the device out.
-pub async fn write_authorized_keys(sftp: &SftpSession, keys: &[String]) -> anyhow::Result<()> {
-    if !sftp.try_exists(".ssh").await.unwrap_or(false) {
-        sftp.create_dir(".ssh")
+/// Adds `keys` to `<dir>/.ssh/authorized_keys` over SFTP (`dir` relative to
+/// the account's home, `.` for the home itself), creating the folders as
+/// needed and keeping the keys already there, so the device is never locked
+/// out by a key added later.
+pub async fn write_authorized_keys(
+    sftp: &SftpSession,
+    dir: &str,
+    keys: &[String],
+) -> anyhow::Result<()> {
+    let dir = dir.trim_end_matches('/');
+    let ssh_dir = if dir.is_empty() || dir == "." {
+        ".ssh".to_string()
+    } else {
+        if !sftp.try_exists(dir).await.unwrap_or(false) {
+            sftp.create_dir(dir)
+                .await
+                .map_err(|e| anyhow!("creating {dir}: {e}"))?;
+        }
+        format!("{dir}/.ssh")
+    };
+    if !sftp.try_exists(&ssh_dir).await.unwrap_or(false) {
+        sftp.create_dir(&ssh_dir)
             .await
-            .map_err(|e| anyhow!("creating .ssh: {e}"))?;
+            .map_err(|e| anyhow!("creating {ssh_dir}: {e}"))?;
     }
-    let existing = match sftp.read(".ssh/authorized_keys").await {
+    let file_path = format!("{ssh_dir}/authorized_keys");
+    let existing = match sftp.read(&file_path).await {
         Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
         Err(_) => String::new(),
     };
     let content = merge_keys(&existing, keys);
     let mut file = sftp
-        .create(".ssh/authorized_keys")
+        .create(&file_path)
         .await
-        .map_err(|e| anyhow!("writing .ssh/authorized_keys: {e}"))?;
+        .map_err(|e| anyhow!("writing {file_path}: {e}"))?;
     file.write_all(content.as_bytes()).await?;
     file.shutdown().await?;
     Ok(())
@@ -384,7 +400,7 @@ pub async fn bridge(conn: Connection) -> anyhow::Result<()> {
 }
 
 /// Réplique's own key: generated on first start, kept in the state folder,
-/// installed on every read-only twin.
+/// written into every read-only twin's `authorized_keys`.
 pub fn load_or_create_key(path: &std::path::Path) -> anyhow::Result<PrivateKey> {
     if path.exists() {
         let raw =

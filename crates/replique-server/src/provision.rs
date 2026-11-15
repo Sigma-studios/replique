@@ -3,8 +3,14 @@
 //!
 //! A sub-account's password exists only between adding a device and pairing
 //! it: sealed in the pairing code's row, used once to install the device's
-//! key (and Réplique's on the twin), then replaced on Hetzner by a random one
-//! nobody keeps. From then on only keys log in.
+//! key, and Réplique's in the twin's `authorized_keys`, then replaced on
+//! Hetzner by a random one nobody keeps. From then on only keys log in.
+//!
+//! The read-only twin's home is the repository folder, one level below the
+//! device's home: two sub-accounts sharing a home share its
+//! `.ssh/authorized_keys` (checked on a real Storage Box), so a key meant for
+//! the read-only login would open the writable one too. The twin cannot write
+//! its own `.ssh`, so its keys are written through the writable login.
 
 use std::sync::Arc;
 
@@ -24,23 +30,23 @@ use crate::hetzner::{AccessSettings, NewSubaccount};
 use crate::secrets::{self, Secret, sha256_hex};
 use crate::ssh::{self, Endpoint};
 
-/// Sealed in `pairing_codes.secrets` until pairing is done.
+/// Sealed in `pairing_codes.secrets` until pairing is done. Only the device's
+/// writable sub-account needs a password: the twin's keys are written through
+/// it, and the twin's own password is random and never kept.
 #[derive(Default, Serialize, Deserialize)]
 struct PairingSecrets {
     device_password: Option<String>,
-    twin_password: Option<String>,
 }
 
 impl Drop for PairingSecrets {
     fn drop(&mut self) {
         use zeroize::Zeroize;
         self.device_password.zeroize();
-        self.twin_password.zeroize();
     }
 }
 
 fn seal(app: &App, s: &PairingSecrets) -> anyhow::Result<Option<Vec<u8>>> {
-    if s.device_password.is_none() && s.twin_password.is_none() {
+    if s.device_password.is_none() {
         return Ok(None);
     }
     let json = zeroize::Zeroizing::new(serde_json::to_vec(s)?);
@@ -130,6 +136,17 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
                     .into_iter()
                     .find(|s| s.username == username.trim())
                     .ok_or_else(|| anyhow!("No sub-account named {username} on this box."))?;
+                if uses_twins(app) {
+                    // The adopted sub-account keeps its keys; only its password
+                    // changes (nobody uses it: the device logs in with its key),
+                    // to write the twin's keys into the repository folder once.
+                    let password = secrets::new_box_password();
+                    hetzner
+                        .reset_subaccount_password(box_id, found.id, &password)
+                        .await
+                        .context("setting a password to write the twin's keys")?;
+                    secrets.device_password = Some(password.expose().to_string());
+                }
                 (found, true)
             }
             None => {
@@ -153,12 +170,14 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
         };
         let mut twin = None;
         if uses_twins(app) {
+            // Hetzner wants a password; the twin never uses one.
             let password = secrets::new_box_password();
+            let twin_home = replique_proto::twin_home(&device_sub.home_directory);
             let created = hetzner
                 .create_subaccount(
                     box_id,
                     NewSubaccount {
-                        home_directory: &device_sub.home_directory,
+                        home_directory: &twin_home,
                         password: &password,
                         access_settings: AccessSettings::ssh_only(true),
                         description: &format!("Réplique: {name} (read-only)"),
@@ -166,10 +185,7 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
                 )
                 .await;
             match created {
-                Ok(t) => {
-                    secrets.twin_password = Some(password.expose().to_string());
-                    twin = Some(t);
-                }
+                Ok(t) => twin = Some(t),
                 Err(e) => {
                     // Leave nothing half made behind.
                     if !adopted {
@@ -251,7 +267,8 @@ pub async fn new_pairing_code(app: &Arc<App>, device_id: &str) -> anyhow::Result
     let mut secrets = PairingSecrets::default();
     if !simulated(app) && !manual(app) {
         let (hetzner, box_id) = app.hetzner()?;
-        if !repo.adopted
+        let twin_needs_key = repo.twin_username.is_some() && !repo.twin_key_installed;
+        if (!repo.adopted || twin_needs_key)
             && let Some(id) = repo.subaccount_id
         {
             let password = secrets::new_box_password();
@@ -259,15 +276,6 @@ pub async fn new_pairing_code(app: &Arc<App>, device_id: &str) -> anyhow::Result
                 .reset_subaccount_password(box_id, id as u64, &password)
                 .await?;
             secrets.device_password = Some(password.expose().to_string());
-        }
-        if !repo.twin_key_installed
-            && let Some(id) = repo.twin_subaccount_id
-        {
-            let password = secrets::new_box_password();
-            hetzner
-                .reset_subaccount_password(box_id, id as u64, &password)
-                .await?;
-            secrets.twin_password = Some(password.expose().to_string());
         }
     } else if manual(app) {
         // Keep the passwords the admin still needs for the manual commands.
@@ -327,15 +335,15 @@ pub async fn pair(app: &Arc<App>, req: PairRequest) -> Result<PairResponse, ApiE
     let simulated = simulated(app);
 
     if !manual {
+        let endpoint = Endpoint {
+            host: repo.host.clone(),
+            port: repo.port,
+            username: repo.username.clone(),
+        };
+        let password = Secret::new(secrets.device_password.clone().unwrap_or_default());
         // The device's own key on its sub-account; an adopted sub-account
         // already has it and is left alone.
         if !repo.adopted {
-            let endpoint = Endpoint {
-                host: repo.host.clone(),
-                port: repo.port,
-                username: repo.username.clone(),
-            };
-            let password = Secret::new(secrets.device_password.clone().unwrap_or_default());
             app.install_keys(
                 &endpoint,
                 &repo.home_directory,
@@ -345,17 +353,10 @@ pub async fn pair(app: &Arc<App>, req: PairRequest) -> Result<PairResponse, ApiE
             .await
             .map_err(upstream)?;
         }
-        // Réplique's key on the read-only twin.
-        if let Some(twin) = &repo.twin_username
-            && !repo.twin_key_installed
-        {
-            let endpoint = Endpoint {
-                host: repo.host.clone(),
-                port: repo.port,
-                username: twin.clone(),
-            };
-            let password = Secret::new(secrets.twin_password.clone().unwrap_or_default());
-            app.install_keys(
+        // Réplique's key in the read-only twin's authorized_keys, written
+        // through the device's sub-account.
+        if repo.twin_username.is_some() && !repo.twin_key_installed {
+            app.install_twin_keys(
                 &endpoint,
                 &repo.home_directory,
                 &password,
@@ -364,8 +365,8 @@ pub async fn pair(app: &Arc<App>, req: PairRequest) -> Result<PairResponse, ApiE
             .await
             .map_err(upstream)?;
         }
-        if !simulated {
-            rotate_passwords(app, &repo).await.map_err(upstream)?;
+        if !simulated && secrets.device_password.is_some() {
+            rotate_password(app, &repo).await.map_err(upstream)?;
         }
         app.store
             .set_keys_installed(&repo.id, true, repo.twin_username.is_some())?;
@@ -396,17 +397,11 @@ pub async fn pair(app: &Arc<App>, req: PairRequest) -> Result<PairResponse, ApiE
     })
 }
 
-/// Replaces the passwords used for pairing with random ones nobody keeps.
-async fn rotate_passwords(app: &App, repo: &Repository) -> anyhow::Result<()> {
+/// Replaces the device sub-account's pairing password with a random one
+/// nobody keeps. The twin's was never kept in the first place.
+async fn rotate_password(app: &App, repo: &Repository) -> anyhow::Result<()> {
     let (hetzner, box_id) = app.hetzner()?;
-    if !repo.adopted
-        && let Some(id) = repo.subaccount_id
-    {
-        hetzner
-            .reset_subaccount_password(box_id, id as u64, &secrets::new_box_password())
-            .await?;
-    }
-    if let Some(id) = repo.twin_subaccount_id {
+    if let Some(id) = repo.subaccount_id {
         hetzner
             .reset_subaccount_password(box_id, id as u64, &secrets::new_box_password())
             .await?;
@@ -443,12 +438,15 @@ pub fn manual_steps(app: &App, device: &Device) -> anyhow::Result<Vec<ManualStep
             password: Secret::new(password.clone()),
         });
     }
-    if let (Some(twin), Some(password)) = (&repo.twin_username, &secrets.twin_password) {
+    // The twin's keys live in the repository folder and are written through
+    // the device's sub-account, so this step logs in there too.
+    if let (Some(_), Some(password)) = (&repo.twin_username, &secrets.device_password) {
         steps.push(ManualStep {
             command: format!(
-                "echo '{}' | ssh -p {} {twin}@{} install-ssh-key",
+                "echo '{}' > replique.pub && printf -- '-mkdir restic\\n-mkdir restic/.ssh\\nput replique.pub restic/.ssh/authorized_keys\\n' | sftp -P {} {}@{}",
                 app.public_key_line(),
                 repo.port,
+                repo.username,
                 repo.host
             ),
             password: Secret::new(password.clone()),
@@ -463,7 +461,7 @@ pub async fn finish_manual(app: &Arc<App>, device_id: &str) -> anyhow::Result<()
         .store
         .repository_of(device_id)?
         .ok_or_else(|| anyhow!("no such device"))?;
-    rotate_passwords(app, &repo).await?;
+    rotate_password(app, &repo).await?;
     app.store.forget_pairing_secrets(device_id)?;
     app.store
         .set_keys_installed(&repo.id, true, repo.twin_username.is_some())?;
@@ -541,9 +539,10 @@ pub async fn remove_device(
     Ok(())
 }
 
-/// Lets `mirror_id` copy `source_id`'s repository: installs the mirroring
-/// device's key on the source's read-only twin (or, without twins, on the
-/// source's own sub-account), using a password set just for that.
+/// Lets `mirror_id` copy `source_id`'s repository: adds the mirroring device's
+/// key to the source's read-only twin (or, without twins, to the source's own
+/// sub-account). Either way it is written through the source's writable
+/// sub-account, logging in with a password set just for that.
 pub async fn assign_mirror(app: &Arc<App>, mirror_id: &str, source_id: &str) -> anyhow::Result<()> {
     if mirror_id == source_id {
         bail!("A device cannot mirror itself.");
@@ -560,42 +559,48 @@ pub async fn assign_mirror(app: &Arc<App>, mirror_id: &str, source_id: &str) -> 
         .store
         .repository_of(source_id)?
         .ok_or_else(|| anyhow!("no such source device"))?;
-    let (username, subaccount_id) = if uses_twins(app) {
-        (repo.twin_username.clone(), repo.twin_subaccount_id)
-    } else {
-        (Some(repo.username.clone()), repo.subaccount_id)
-    };
-    let username = username.ok_or_else(|| anyhow!("The source has no read-only login."))?;
+    let twins = uses_twins(app);
+    if twins && repo.twin_username.is_none() {
+        bail!("The source has no read-only login.");
+    }
     let endpoint = Endpoint {
         host: repo.host.clone(),
         port: repo.port,
-        username,
+        username: repo.username.clone(),
+    };
+    let install = |password: Secret| {
+        let (endpoint, home, key) = (endpoint.clone(), repo.home_directory.clone(), key.clone());
+        let app = app.clone();
+        async move {
+            if twins {
+                app.install_twin_keys(&endpoint, &home, &password, &[key])
+                    .await
+            } else {
+                app.install_keys(&endpoint, &home, &password, &[key])
+                    .await
+                    .map(|_| ())
+            }
+        }
     };
     if simulated(app) {
-        app.install_keys(
-            &endpoint,
-            &repo.home_directory,
-            &Secret::new(String::new()),
-            &[key],
-        )
-        .await?;
+        install(Secret::new(String::new())).await?;
     } else {
         if manual(app) {
             bail!(
-                "Key installation is manual: add {}'s key to {} in the Hetzner Console, then assign again.",
+                "Key installation is manual: add {}'s key for {} by hand, then assign again.",
                 mirror.name,
                 endpoint.username
             );
         }
         let (hetzner, box_id) = app.hetzner()?;
-        let id = subaccount_id.ok_or_else(|| anyhow!("unknown sub-account id"))? as u64;
+        let id = repo
+            .subaccount_id
+            .ok_or_else(|| anyhow!("unknown sub-account id"))? as u64;
         let password = secrets::new_box_password();
         hetzner
             .reset_subaccount_password(box_id, id, &password)
             .await?;
-        let installed = app
-            .install_keys(&endpoint, &repo.home_directory, &password, &[key])
-            .await;
+        let installed = install(password).await;
         hetzner
             .reset_subaccount_password(box_id, id, &secrets::new_box_password())
             .await?;

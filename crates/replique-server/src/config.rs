@@ -74,9 +74,9 @@ pub struct StorageBoxConfig {
     /// no `install-ssh-key`.
     pub port: u16,
     /// How Réplique reads repositories to measure and restore them: `twin` (a
-    /// read-only sub-account sharing the device's home, the plan) or `main` (the
-    /// main account, with Réplique's own key installed on it by hand), in case
-    /// Hetzner refuses two sub-accounts with the same home directory.
+    /// read-only sub-account whose home is the repository folder) or `main` (the
+    /// main account, with Réplique's own key installed on it by hand), for a
+    /// box where sub-accounts are not wanted or not available.
     pub measure_via: MeasureVia,
     /// The main account's login for `measure_via = "main"`. Defaults to the
     /// box's `username` from the API.

@@ -182,10 +182,16 @@ async fn device_added_paired_and_reporting() {
     let pc_id = location.trim_start_matches("/devices/").to_string();
     let subs = mock.subaccounts();
     assert_eq!(subs.len(), 2);
-    assert!(
-        subs.iter()
-            .all(|s| s["home_directory"] == "replique/sigma/pc")
-    );
+    // The twin's home is the repository folder, one level down: sharing the
+    // device's home would share its authorized_keys.
+    for s in &subs {
+        let expected = if s["access_settings"]["readonly"] == true {
+            "replique/sigma/pc/restic"
+        } else {
+            "replique/sigma/pc"
+        };
+        assert_eq!(s["home_directory"], expected);
+    }
     assert_eq!(
         subs.iter()
             .filter(|s| s["access_settings"]["readonly"] == true)
@@ -216,23 +222,27 @@ async fn device_added_paired_and_reporting() {
         .find(|s| s["access_settings"]["readonly"] == false)
         .unwrap();
     assert_eq!(reply.storage.username, device_sub["username"]);
-    // Both keys landed (the local root stands in for the box), and both
-    // pairing passwords were replaced.
-    let authorized = std::fs::read_to_string(
-        server
-            .local_root()
-            .join("replique/sigma/pc/.ssh/authorized_keys"),
-    )
-    .unwrap();
-    assert!(authorized.contains("test-device"));
-    assert!(authorized.contains(&server.app.public_key_line()[..60]));
-    assert_eq!(
-        mock.commands()
-            .iter()
-            .filter(|c| c.ends_with("reset_subaccount_password"))
-            .count(),
-        2
-    );
+    // Each key landed in its own file (the local root stands in for the
+    // box): the device's in its home, Réplique's in the twin's home, the
+    // repository folder. Réplique's key must not open the writable login.
+    let read = |rel: &str| std::fs::read_to_string(server.local_root().join(rel)).unwrap();
+    let device_keys = read("replique/sigma/pc/.ssh/authorized_keys");
+    let twin_keys = read("replique/sigma/pc/restic/.ssh/authorized_keys");
+    let replique_key = &server.app.public_key_line()[..60];
+    assert!(device_keys.contains("test-device"));
+    assert!(!device_keys.contains(replique_key));
+    assert!(twin_keys.contains(replique_key));
+    assert!(!twin_keys.contains("test-device"));
+    // Only the device's password was used, then replaced; the twin's was
+    // random from the start and never kept.
+    let device_id = device_sub["id"].clone();
+    let resets: Vec<String> = mock
+        .commands()
+        .into_iter()
+        .filter(|c| c.ends_with("reset_subaccount_password"))
+        .collect();
+    assert_eq!(resets.len(), 1);
+    assert!(resets[0].contains(&format!("/subaccounts/{device_id}/")));
     // The code is spent.
     let (status, err) = Device::pair(&server.url, &code, DeviceKind::Nixos)
         .await
@@ -388,12 +398,18 @@ async fn device_added_paired_and_reporting() {
         .await
         .unwrap();
     assert_eq!(reply.device_name, "Téléphone");
+    let homes: Vec<String> = mock
+        .subaccounts()
+        .iter()
+        .filter_map(|s| s["home_directory"].as_str().map(String::from))
+        .filter(|h| h.starts_with("replique/sigma/telephone"))
+        .collect();
     assert_eq!(
-        mock.subaccounts()
-            .iter()
-            .filter(|s| s["home_directory"] == "replique/sigma/telephone")
-            .count(),
-        2
+        homes,
+        [
+            "replique/sigma/telephone",
+            "replique/sigma/telephone/restic"
+        ]
     );
 
     // One device cannot report for another.
@@ -452,25 +468,22 @@ async fn device_added_paired_and_reporting() {
         .subaccounts()
         .into_iter()
         .find(|s| {
-            s["home_directory"] == "replique/sigma/telephone"
+            s["home_directory"] == "replique/sigma/telephone/restic"
                 && s["access_settings"]["readonly"] == true
         })
         .unwrap();
     assert_eq!(sources.sources[0].storage.username, twin["username"]);
-    let phone_keys = std::fs::read_to_string(
-        server
-            .local_root()
-            .join("replique/sigma/telephone/.ssh/authorized_keys"),
-    )
-    .unwrap();
-    assert_eq!(
-        phone_keys
-            .lines()
-            .filter(|l| l.contains("test-device"))
-            .count(),
-        2,
-        "the phone's and the PC's keys"
-    );
+    // The twin's home is the repository folder.
+    assert_eq!(sources.sources[0].storage.repo_path, "/home");
+    // The PC's key went into the twin's own authorized_keys, next to
+    // Réplique's, and not into the phone's: it must not open the writable login.
+    let read = |rel: &str| std::fs::read_to_string(server.local_root().join(rel)).unwrap();
+    let devices = |keys: &str| keys.lines().filter(|l| l.contains("test-device")).count();
+    let twin_keys = read("replique/sigma/telephone/restic/.ssh/authorized_keys");
+    assert_eq!(devices(&twin_keys), 1, "the PC's key");
+    assert!(twin_keys.contains(&server.app.public_key_line()[..60]));
+    let phone_keys = read("replique/sigma/telephone/.ssh/authorized_keys");
+    assert_eq!(devices(&phone_keys), 1, "only the phone's own key");
 
     let mirror = pc
         .start("phone-mirror", RunKind::Mirror, &uuid(), chrono::Utc::now())
@@ -831,7 +844,7 @@ async fn manual_keys_adoption_and_a_full_box() {
         .find(|s| s["access_settings"]["readonly"] == true)
         .unwrap()
         .clone();
-    assert_eq!(twin["home_directory"], "backups/pc");
+    assert_eq!(twin["home_directory"], "backups/pc/restic");
     let twin_user = twin["username"].as_str().unwrap().to_string();
 
     let code = pairing_code(&browser, &id).await;
@@ -839,36 +852,44 @@ async fn manual_keys_adoption_and_a_full_box() {
         .await
         .unwrap();
     assert_eq!(reply.storage.username, existing.username);
-    // Manual mode: the page shows the command for the twin (the adopted
-    // sub-account already has its key), with the password to type once.
+    // Manual mode: the page shows one command, writing Réplique's key into
+    // the twin's home (the repository folder) through the adopted sub-account,
+    // which already has the device's key and gets no install-ssh-key step.
     let (_, page) = browser.get(&format!("/devices/{id}")).await;
     assert!(page.contains("Install the keys by hand"));
+    assert!(page.contains("restic/.ssh/authorized_keys"));
     assert!(page.contains(&format!(
-        "{twin_user}@u1337.your-storagebox.de install-ssh-key"
-    )));
-    assert!(!page.contains(&format!(
-        "{}@u1337.your-storagebox.de install-ssh-key",
+        "sftp -P 23 {}@u1337.your-storagebox.de",
         existing.username
     )));
+    assert!(!page.contains("install-ssh-key"));
+    assert!(!page.contains(&format!("{twin_user}@")));
     let resets = |m: &MockHetzner| {
         m.commands()
             .into_iter()
             .filter(|c| c.ends_with("reset_subaccount_password"))
             .collect::<Vec<_>>()
     };
-    assert!(
-        resets(&mock).is_empty(),
-        "nothing rotated before the admin confirms"
-    );
+    // The adopted sub-account got a password for that one command; nothing
+    // is rotated before the admin confirms.
+    let set = resets(&mock);
+    assert_eq!(set.len(), 1);
+    assert!(set[0].contains(&format!("/subaccounts/{}/", existing.id)));
     let (status, location) = browser
         .post(&format!("/devices/{id}/manual-done"), &[])
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert!(location.contains("ok="), "{location}");
-    // Only the twin's password was rotated; the adopted one is left alone.
+    // Then that password is replaced by one nobody keeps; the twin's is
+    // never touched.
     let rotated = resets(&mock);
-    assert_eq!(rotated.len(), 1);
-    assert!(rotated[0].contains(&format!("/subaccounts/{}/", twin["id"])));
+    assert_eq!(rotated.len(), 2);
+    assert!(rotated[1].contains(&format!("/subaccounts/{}/", existing.id)));
+    assert!(
+        !rotated
+            .iter()
+            .any(|r| r.contains(&format!("/subaccounts/{}/", twin["id"])))
+    );
     let (_, page) = browser.get(&format!("/devices/{id}")).await;
     assert!(!page.contains("Install the keys by hand"));
 

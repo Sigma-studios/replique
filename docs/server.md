@@ -106,12 +106,23 @@ Each device has its own sub-account, home `replique/<owner>/<device>`, SSH only,
 reachable from outside Hetzner. Pairing logs in once with the password Réplique
 gave it at creation, installs the device's public key, then replaces the
 password with a random one nobody keeps. A second, read-only sub-account (the
-**twin**) shares the home; Réplique installs its own key there (shown on the
-Settings page) and uses it to measure the repository and serve website
-restores, always with `restic --no-lock`.
+**twin**) has the repository folder as its home (`replique/<owner>/<device>/restic`);
+Réplique writes its own key (shown on the Settings page) into the twin's
+`authorized_keys`, inside that folder, through the device's sub-account during
+pairing, and uses it to measure the repository and serve website restores,
+always with `restic --no-lock`.
 
-Two things depend on answers Hetzner has not given yet, so they are switches in
-`[storage_box]`:
+The twin is one level down on purpose. Checked on a real Storage Box: two
+sub-accounts sharing a home share its `.ssh/authorized_keys`, and
+`install-ssh-key` fails on a read-only one. A twin sharing the device's home
+would accept the device's key, and any key given to it (Réplique's, a mirroring
+PC's) would also open the device's writable login. With the repository folder as
+its home, the twin has its own key file, which only the writable login can
+write. The device could edit that file too; at worst it removes Réplique's key
+(measurements fail, which raises an alert) or lets someone read its own
+encrypted repository.
+
+Two switches in `[storage_box]` cover setups where this does not fit:
 
 | Switch | Values | Meaning |
 | --- | --- | --- |
@@ -121,11 +132,9 @@ Two things depend on answers Hetzner has not given yet, so they are switches in
 | | `sftp` | Pairing writes `.ssh/authorized_keys` over SFTP with the password, keeping any key already there. |
 | | `manual` | Pairing finishes without touching the box; the device page shows a one-line command per sub-account, with its password, to run once, and a button that then rotates the passwords. |
 
-If two sub-accounts can share a home, they probably share its
-`.ssh/authorized_keys` as well: the twin would then also accept the device's
-key, and Réplique's key would also log in to the device's (writable)
-sub-account. Check this together with whether shared homes work at all; if it
-is so, `measure_via = "main"` keeps Réplique's key off the devices' logins.
+Both `install-ssh-key` and `sftp` were checked on a real Storage Box with a
+sub-account's password. The twin's key is always written over SFTP, whatever
+`key_install` says: `install-ssh-key` only writes the account's own `.ssh`.
 
 Host keys are pinned: `[storage_box] known_hosts` if given, otherwise the key
 seen on the first connection, which pairing also hands to devices.

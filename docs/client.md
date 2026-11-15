@@ -201,14 +201,14 @@ spooled.
 ### Mirror jobs
 
 A mirror keeps an encrypted byte copy of another device's repository, the phone's
-on the PC. Assign it on the website: the server installs this device's key on the
+on the PC. Assign it on the website: the server adds this device's key to the
 source's read-only twin login and lists that login in `GET /mirror-sources`
 (cached in `mirror/sources.json`, so a mirror runs while the server is down).
 Each run:
 
 1. `rclone sync` from the twin to `mirrorPath`, with `--immutable` (restic never
    rewrites a file, so a changed one is corruption, not an update), without
-   `locks/`, and `--backup-dir <mirrorPath>.removed/<time>`: a file gone from the
+   `locks/` and `.ssh/` (the twin's own keys, kept in the repository folder), and `--backup-dir <mirrorPath>.removed/<time>`: a file gone from the
    source is moved aside and deleted after `keepRemovedDays` (30).
 2. Every new file under `data/`, `index/` and `snapshots/` is hashed: restic names
    them by the SHA-256 of their contents, so a mismatch is corruption, found

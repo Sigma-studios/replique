@@ -89,8 +89,10 @@ Body (`pair_request.json`):
 website win; the ones sent here are informative.
 
 The server installs the public key on the device's sub-account (using its
-password once), installs its own key on the read-only twin, then resets both
-passwords to random values nobody keeps. Reply (`pair_response.json`):
+password once), writes its own key into the read-only twin's
+`authorized_keys` (inside the repository folder, through the same login), then
+resets the password to a random value nobody keeps. Reply
+(`pair_response.json`):
 
 ```json
 {
@@ -114,8 +116,9 @@ for a retry until it expires.
 **Adopting an existing repository** (the PC's `u123456-sub1`): the website's
 "import existing" action registers the sub-account and creates its twin, then
 shows a pairing code like any other. The device pairs with its existing key
-(`replique-client pair --adopt`); the server sees the key is already installed
-and leaves the sub-account's keys and password alone.
+(`replique-client pair --adopt`); the server leaves the sub-account's keys
+alone. It does set a password on it once, nobody using it (the device logs in
+with its key), to write the twin's `authorized_keys`, then replaces it.
 
 After pairing the device initialises its repository if needed: `restic cat
 config` exits 10 when there is none, then `restic init`. Running that again is
@@ -177,10 +180,11 @@ snapshot holds it. `rules.retention.policy` is one of:
 ### `GET /api/v1/mirror-sources`
 
 The repositories this device may mirror (`mirror_sources.json`). When the admin
-assigns a mirror on the website (the PC copying the phone), the server installs
-this device's SSH public key on the source's read-only twin, and lists the twin's
-login here. The twin cannot write, so restic commands through it need
-`--no-lock`.
+assigns a mirror on the website (the PC copying the phone), the server adds
+this device's SSH public key to the source's read-only twin, and lists the
+twin's login here, with `repo_path` `/home` (the twin's home is the repository
+folder). The twin cannot write, so restic commands through it need `--no-lock`;
+a copy should skip the folder's `.ssh/`.
 
 ## The phone's rules
 
@@ -321,9 +325,16 @@ deleting stays the user's action.
 * Each device's repository has its own sub-account, home
   `replique/<owner-slug>/<device-slug>`; the repository is the `restic` folder in
   it. Sub-accounts are chrooted, so the device sees it as `/home/restic`.
-* A second, **read-only** sub-account (the twin) points at the same home. Réplique
-  measures sizes and serves website restores through it (with `restic --no-lock`);
-  a mirroring device copies through it.
+* A second, **read-only** sub-account (the twin) has the repository folder itself
+  as its home, `replique/<owner-slug>/<device-slug>/restic`, and sees the
+  repository as `/home`. Réplique measures sizes and serves website restores
+  through it (with `restic --no-lock`); a mirroring device copies through it.
+* Why one level down: on a Storage Box, two sub-accounts sharing a home share its
+  `.ssh/authorized_keys`, so a key given to the read-only login would also open
+  the writable one. One level down, the twin reads its own
+  `restic/.ssh/authorized_keys`. It cannot write that file itself, so Réplique
+  writes it through the device's sub-account with a password set for that
+  moment only. restic ignores the extra `.ssh` folder in the repository.
 * SSH, SFTP, restic and rclone use port **23** (port 22 is SFTP-only).
 * Devices with `ssh` use restic's SFTP backend
   (`sftp:<user>@<host>:/home/restic`, port through an SSH host alias or

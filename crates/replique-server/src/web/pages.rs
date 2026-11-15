@@ -304,7 +304,7 @@ fn add_form(ctx: &Ctx, app: &App, error: Option<&str>, name: &str) -> Html<Strin
                     details {
                         summary { "Adopt an existing sub-account instead" }
                         label style="margin-top: 0.5rem" { "Sub-account username"
-                            span.hint { "e.g. u123456-sub1: kept as is, with its keys and password; Réplique only adds a read-only twin." }
+                            span.hint { "e.g. u123456-sub1: kept as is, with its keys; Réplique adds a read-only twin, and changes the password once (nobody uses it) to write the twin's key." }
                             input type="text" name="adopt" placeholder="u123456-sub1";
                         }
                     }

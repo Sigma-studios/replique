@@ -7,7 +7,7 @@
         "host": "u123456.your-storagebox.de",
         "port": 23,
         "username": "u123456-sub4",
-        "repo_path": "/home/restic"
+        "repo_path": "/home"
       }
     }
   ]

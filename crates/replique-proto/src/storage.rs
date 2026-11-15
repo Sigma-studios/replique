@@ -15,10 +15,24 @@ pub const REPO_DIR: &str = "restic";
 pub const DEVICE_REPO_PATH: &str = "/home/restic";
 
 /// The home directory (relative to the box's root) given to a device's
-/// sub-account and to its read-only twin.
+/// sub-account.
 pub fn sub_account_home(owner_slug: &str, device_slug: &str) -> String {
     format!("replique/{owner_slug}/{device_slug}")
 }
+
+/// The home directory of a repository's read-only twin: the repository folder
+/// itself, one level below the device's home. Two sub-accounts sharing a home
+/// share its `.ssh/authorized_keys` (checked on a real Storage Box), so a key
+/// meant for the read-only login would also open the writable one. One level
+/// down, the twin has its own `.ssh` (inside the repository folder, which
+/// restic ignores), written through the writable login.
+pub fn twin_home(device_home: &str) -> String {
+    format!("{}/{REPO_DIR}", device_home.trim_end_matches('/'))
+}
+
+/// The repository path as the read-only twin sees it: its home is the
+/// repository folder.
+pub const TWIN_REPO_PATH: &str = "/home";
 
 /// A lowercase ASCII slug for owner and device names in box paths: letters and
 /// digits kept (accents dropped), everything else collapsed to single dashes.
@@ -103,6 +117,9 @@ mod tests {
         assert_eq!(slugify("façade"), "facade");
         assert_eq!(slugify("???"), "device");
         assert_eq!(sub_account_home("sigma", "pc"), "replique/sigma/pc");
+        assert_eq!(twin_home("replique/sigma/pc"), "replique/sigma/pc/restic");
+        // An adopted sub-account's home may end with a slash (`pc/` on the box).
+        assert_eq!(twin_home("pc/"), "pc/restic");
     }
 
     #[test]

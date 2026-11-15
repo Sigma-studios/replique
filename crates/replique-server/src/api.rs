@@ -397,15 +397,15 @@ async fn mirror_sources(
         ) else {
             continue;
         };
-        // Through the source's read-only twin; without twins (Hetzner refusing
-        // two sub-accounts on one home), through the source's own login, on
-        // which pairing the mirror installed this device's key.
-        let username = match app.config.storage_box.measure_via {
+        // Through the source's read-only twin, whose home is the repository
+        // folder; without twins, through the source's own login, on which
+        // assigning the mirror installed this device's key.
+        let (username, repo_path) = match app.config.storage_box.measure_via {
             MeasureVia::Twin => match repo.twin_username.clone() {
-                Some(u) => u,
+                Some(u) => (u, replique_proto::TWIN_REPO_PATH.to_string()),
                 None => continue,
             },
-            MeasureVia::Main => repo.username.clone(),
+            MeasureVia::Main => (repo.username.clone(), repo.repo_path.clone()),
         };
         sources.push(MirrorSource {
             device_id: source.id.clone(),
@@ -415,7 +415,7 @@ async fn mirror_sources(
                 host: repo.host.clone(),
                 port: repo.port,
                 username,
-                repo_path: repo.repo_path.clone(),
+                repo_path,
             },
         });
     }

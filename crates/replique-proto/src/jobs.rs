@@ -226,7 +226,9 @@ pub struct MirrorSource {
     pub device_id: String,
     pub device_name: String,
     /// The read-only twin's login. It cannot write, so restic commands through it
-    /// need `--no-lock`, and rclone must not try to delete anything there.
+    /// need `--no-lock`, and rclone must not try to delete anything there. Its
+    /// home is the repository folder, so `repo_path` is `/home`, and the folder
+    /// holds the twin's own `.ssh/`, which a copy should skip.
     pub storage: StorageInfo,
 }
 

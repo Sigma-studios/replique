@@ -99,6 +99,12 @@ pub fn run(
         // copy is never written to, so it needs none.
         "--exclude".into(),
         "/locks/**".into(),
+        // The source's read-only login keeps its authorized_keys inside the
+        // repository folder (its home is that folder, so it cannot share the
+        // writable login's keys). Who may read the source is not part of its
+        // backups, and a copy of it here would be misleading.
+        "--exclude".into(),
+        "/.ssh/**".into(),
         // restic never rewrites a file: one changing in place is corruption, and
         // must not overwrite the good copy.
         "--immutable".into(),

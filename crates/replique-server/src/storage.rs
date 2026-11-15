@@ -102,7 +102,8 @@ impl App {
                         port: repo.port,
                         username,
                     },
-                    path: repo.repo_path.clone(),
+                    // The twin's home is the repository folder itself.
+                    path: replique_proto::TWIN_REPO_PATH.into(),
                 })
             }
             MeasureVia::Main => {
@@ -182,7 +183,7 @@ impl App {
             KeyInstall::Sftp => {
                 let conn = self.ssh_connect(endpoint, Auth::Password(password)).await?;
                 let sftp = conn.sftp().await?;
-                ssh::write_authorized_keys(&sftp, keys).await?;
+                ssh::write_authorized_keys(&sftp, ".", keys).await?;
                 let _ = sftp.close().await;
                 conn
             }
@@ -190,6 +191,37 @@ impl App {
         let seen = conn.host_key().map(ssh::key_line);
         conn.close().await;
         Ok(seen)
+    }
+
+    /// Puts `keys` in a read-only twin's `authorized_keys`, which lives in the
+    /// repository folder (the twin's home). The twin cannot write it itself, so
+    /// this logs in to the device's writable sub-account (`endpoint`) with a
+    /// password set just for this. Always over SFTP: `install-ssh-key` only
+    /// writes the account's own `.ssh`, which the twin does not read.
+    pub async fn install_twin_keys(
+        &self,
+        endpoint: &Endpoint,
+        home_directory: &str,
+        password: &Secret,
+        keys: &[String],
+    ) -> anyhow::Result<()> {
+        if let Some(root) = &self.config.storage_box.local_root {
+            let dir = root
+                .join(home_directory)
+                .join(replique_proto::REPO_DIR)
+                .join(".ssh");
+            std::fs::create_dir_all(&dir)?;
+            let file = dir.join("authorized_keys");
+            let existing = std::fs::read_to_string(&file).unwrap_or_default();
+            std::fs::write(&file, ssh::merge_keys(&existing, keys))?;
+            return Ok(());
+        }
+        let conn = self.ssh_connect(endpoint, Auth::Password(password)).await?;
+        let sftp = conn.sftp().await?;
+        let result = ssh::write_authorized_keys(&sftp, replique_proto::REPO_DIR, keys).await;
+        let _ = sftp.close().await;
+        conn.close().await;
+        result
     }
 
     /// Deletes a repository's files, logging in to its sub-account with a
