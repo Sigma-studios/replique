@@ -28,6 +28,16 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
         &["backup", "--quiet", src.to_str().unwrap()],
     );
 
+    // An upload in progress on the source, as the phone's rclone names it.
+    let pack_dir = fs::read_dir(phone.join("data"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let uploading = pack_dir.join(format!("{}.3f2a9c1d.partial", "ab".repeat(32)));
+    fs::write(&uploading, b"half a pack").unwrap();
+
     let copy = root.join("Backups/phone");
     c.write_config(json!({
         "server": mock.url,
@@ -50,6 +60,11 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
     assert_eq!(m.files_verified, m.files_copied);
     assert!(m.hash_mismatches.is_empty());
     assert!(m.total_bytes.unwrap() > 0);
+    let copied_partial = walkdir(&copy)
+        .into_iter()
+        .any(|p| p.to_string_lossy().ends_with(".partial"));
+    assert!(!copied_partial, "an upload in progress is not copied");
+    fs::remove_file(&uploading).unwrap();
     // The copy is a working repository for whoever has the password.
     assert_eq!(
         snapshot_ids(&copy, PHONE_PASSWORD),
@@ -129,4 +144,20 @@ fn a_mirror_the_server_does_not_list_fails_with_a_reason() {
     // `mirror` refuses a backup job.
     c.write_config(json!({ "jobs": { "home": { "paths": ["/x"] } } }));
     assert!(!c.run(&["mirror", "home"]).status.success());
+}
+
+fn walkdir(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    let mut pending = vec![root.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        for entry in fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                pending.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
 }

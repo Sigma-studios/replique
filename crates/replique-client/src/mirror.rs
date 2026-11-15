@@ -105,6 +105,12 @@ pub fn run(
         // backups, and a copy of it here would be misleading.
         "--exclude".into(),
         "/.ssh/**".into(),
+        // A file the source is still uploading: the phone's rclone writes each
+        // one as `<name>.<random>.partial` and renames it once complete. Copied
+        // mid-upload, it grows under rclone, which then reports it corrupted
+        // ("sizes differ"); it comes with the next run under its real name.
+        "--exclude".into(),
+        "*.partial".into(),
         // restic never rewrites a file: one changing in place is corruption, and
         // must not overwrite the good copy.
         "--immutable".into(),
