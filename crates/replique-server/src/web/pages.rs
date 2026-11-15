@@ -450,11 +450,21 @@ fn pairing_block(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup
                             p.small.muted { "Valid until " (fmt::datetime(code.expires_at)) " (" (fmt::ago(code.expires_at)) ")." }
                             @if device.kind == DeviceKind::Android {
                                 p { "Scan the QR code with the Réplique app." }
+                            } @else if device.kind == DeviceKind::Facade {
+                                p { "On the façade server, as root, pair with this code as façade's README explains ("
+                                    a href="https://github.com/Sigma-studios/facade#offsite-copies" { "Offsite copies" } ", “A sub-account from Réplique”), with "
+                                    code { (app.config.public_url) } " as the URL." }
                             } @else {
                                 p { "On the device, run:" }
                             }
-                            div.copy { code { (cli) } button type="button" data-copy=(cli) { "Copy" } }
-                            p.small.muted { "The device generates its SSH key and its restic password itself; save that password in your password manager when it shows it." }
+                            @if device.kind != DeviceKind::Facade {
+                                div.copy { code { (cli) } button type="button" data-copy=(cli) { "Copy" } }
+                            }
+                            @if device.kind == DeviceKind::Facade {
+                                p.small.muted { "façade installs its own SSH key and encrypts its copies with a key it generates; save that key in your password manager when façade shows it." }
+                            } @else {
+                                p.small.muted { "The device generates its SSH key and its restic password itself; save that password in your password manager when it shows it." }
+                            }
                         }
                     }
                 }
@@ -669,7 +679,11 @@ pub async fn device(
                     @if let Some(v) = &device.client_version { dt { "Client" } dd { (v) } }
                     @if let Some(s) = device.last_seen_at { dt { "Last report" } dd { (fmt::ago(s)) } }
                     @if let Some(repo) = &repo {
-                        dt { "Repository" } dd.mono { (format!("sftp:{}@{}:{}", repo.username, repo.host, repo.repo_path)) " (port " (repo.port) ")" }
+                        @if device.kind == DeviceKind::Facade {
+                            dt { "Offsite copy" } dd { span.mono { (format!("sftp:{}@{}:{}", repo.username, repo.host, repo.repo_path)) } " (port " (repo.port) "), in façade's own encrypted format" }
+                        } @else {
+                            dt { "Repository" } dd.mono { (format!("sftp:{}@{}:{}", repo.username, repo.host, repo.repo_path)) " (port " (repo.port) ")" }
+                        }
                         dt { "Home on the box" } dd.mono { (repo.home_directory) }
                         @if let Some(t) = &repo.twin_username { dt { "Read-only twin" } dd.mono { (t) @if !repo.twin_key_installed { " (key not installed yet)" } } }
                         @if repo.adopted { dt { "Adopted" } dd { "existing sub-account, its keys left alone" } }
@@ -677,7 +691,7 @@ pub async fn device(
                 }
                 @if let Some(repo) = &repo {
                     div.actions style="margin-top: 0.6rem" {
-                        @if device.paired_at.is_some() {
+                        @if device.paired_at.is_some() && device.kind != DeviceKind::Facade {
                             @if app.unlocks.is_unlocked(&admin.session, &repo.id, idle) {
                                 a.button.primary href={ "/repos/" (repo.id) "/snapshots" } { "Browse snapshots" }
                             } @else {
@@ -685,6 +699,17 @@ pub async fn device(
                             }
                         }
                         @if device.kind == DeviceKind::Android { a.button href={ "/devices/" (device.id) "/rules" } { "Phone rules" } }
+                    }
+                    @if device.kind == DeviceKind::Facade {
+                        // façade seals its chunks with its own key before they
+                        // leave: there is no restic repository to unlock here.
+                        p.small.muted style="margin-top: 0.6rem" {
+                            "This is not a restic repository: façade encrypts its copies itself, so they cannot be browsed here. "
+                            "Restore through façade with its offsite key (keep it in your password manager): "
+                            code { "facade backup restore <app> <volume> <time> --from offsite" } ", or rebuild a lost server with "
+                            code { "facaded offsite-restore --key-file …" } ". "
+                            a href="https://github.com/Sigma-studios/facade#offsite-copies" { "façade's README" } " has the steps."
+                        }
                     }
                 }
             }
@@ -810,7 +835,7 @@ pub async fn remove_form(
                     (csrf_field(&ctx))
                     p { "Its sub-accounts are deleted on the Storage Box, its report token stops working, and its runs and measurements are forgotten here." }
                     label.inline { input type="radio" name="data" value="keep" checked; "Keep its backups on the box" }
-                    @if let Some(r) = &repo { p.small.muted style="margin: -0.4rem 0 0 1.6rem" { "They stay in " code { (r.home_directory) } ", reachable with the main account; restic can still restore them." } }
+                    @if let Some(r) = &repo { p.small.muted style="margin: -0.4rem 0 0 1.6rem" { "They stay in " code { (r.home_directory) } ", reachable with the main account; " @if device.kind == DeviceKind::Facade { "façade can still restore them with its offsite key." } @else { "restic can still restore them." } } }
                     label.inline { input type="radio" name="data" value="delete"; "Delete its backups too" }
                     @if repo.as_ref().is_some_and(|r| r.adopted) {
                         div.notice.warn { "This sub-account was adopted, not created by Réplique." }

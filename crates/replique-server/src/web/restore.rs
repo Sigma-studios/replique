@@ -23,6 +23,13 @@ fn repo_and_device(app: &App, id: &str) -> Result<(Repository, Device), WebError
         .store
         .device(&repo.device_id)?
         .ok_or_else(WebError::not_found)?;
+    // façade encrypts its offsite copies itself: there is no restic repository
+    // behind this login, and no password typed here could open it.
+    if device.kind == replique_proto::DeviceKind::Facade {
+        return Err(WebError::bad_request(
+            "This device is a façade server: its copies are in façade's own encrypted format, not restic. Restore them through façade (facade backup restore … --from offsite) with its offsite key.",
+        ));
+    }
     Ok((repo, device))
 }
 

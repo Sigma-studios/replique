@@ -77,6 +77,20 @@ restic -r /path/to/phone-mirror snapshots
 restic -r /path/to/phone-mirror restore latest --target ./restored
 ```
 
+## façade's offsite copy
+
+façade's sub-account holds no restic repository: façade encrypts its backups with
+its own offsite key before they leave, so restic and the website cannot open them.
+They come back through façade, with that key from your password manager:
+
+* One volume, on a running server: `facade backup ls <app>` lists the backups and
+  where each is; `facade backup restore <app> <volume> <time> --from offsite`
+  brings one back.
+* A lost server: install façade on a new machine, then `facaded offsite-restore
+  --key-file <file holding the key>` restores its database, secrets and
+  certificate, and the apps' volumes follow. façade's README, "Rebuilding a lost
+  server from its offsite copy", has every step.
+
 ## From the website
 
 While Réplique is up, a device's page has **Unlock to browse and restore**:
