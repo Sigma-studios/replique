@@ -91,6 +91,8 @@ pkgs.testers.runNixOSTest {
         user = "alice";
         mirrorSource = "dev_PHONE";
         mirrorPath = "/home/alice/Backups/phone";
+        # The test's phone repository is seconds old.
+        mirrorMinAge = "0";
       };
     };
   };

@@ -87,6 +87,21 @@ pub fn run(
     };
 
     let mut run = reporter.start(RunKind::Mirror);
+
+    // Copies a run found broken are dropped before copying again. rclone runs
+    // with --immutable, so it would refuse to replace them, and the copy would
+    // fail the same way every night; removed, they come back whole below. A
+    // file that is wrong on the source itself fails again after this.
+    let mut previous = load_verified(state, name);
+    let recheck = verify(&dest, &previous, stop, |_| {});
+    for rel in &recheck.mismatches {
+        match fs::remove_file(dest.join(rel)) {
+            Ok(()) => log!("{rel}: did not match its name, copying it again"),
+            Err(e) => log!("{rel}: did not match its name and cannot be removed: {e}"),
+        }
+    }
+    previous = recheck.verified;
+
     let stamp = Utc::now().format(REMOVED_STAMP).to_string();
     let backup_dir = removed_root.join(&stamp);
     let mut args: Vec<String> = vec![
@@ -120,12 +135,20 @@ pub fn run(
         "--stats-log-level".into(),
         "NOTICE".into(),
     ];
+    // A file the source is still writing: the phone's rclone uploads each
+    // pack in place, under its final name, so a copy taken meanwhile is cut
+    // short (and fails its hash check). Restic never touches a file again
+    // once written, so anything this old is complete.
+    let min_age = job.mirror_min_age.clone().unwrap_or_else(|| "15m".into());
+    if !matches!(min_age.trim(), "" | "0" | "0s") {
+        args.push("--min-age".into());
+        args.push(min_age);
+    }
     args.extend(source.flags.iter().cloned());
 
     let rclone = std::env::var_os("REPLIQUE_RCLONE").unwrap_or_else(|| "rclone".into());
     let copy = sync(&rclone, &args, stop, |p| reporter.progress(&mut run, p));
 
-    let previous = load_verified(state, name);
     let verify = verify(&dest, &previous, stop, |p| reporter.progress(&mut run, p));
     save_verified(state, name, &verify.verified);
 

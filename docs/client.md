@@ -208,10 +208,14 @@ Each run:
 
 1. `rclone sync` from the twin to `mirrorPath`, with `--immutable` (restic never
    rewrites a file, so a changed one is corruption, not an update), without
-   `locks/`, `.ssh/` (the twin's own keys, kept in the repository folder) and
-   `*.partial` (files the source is still uploading; they come with the next
-   run), and `--backup-dir <mirrorPath>.removed/<time>`: a file gone from the
+   `locks/`, `.ssh/` (the twin's own keys, kept in the repository folder),
+   `*.partial`, and files younger than `mirrorMinAge` (15 minutes: the phone
+   uploads each pack in place under its final name, so a younger file may still
+   be growing; it comes with the next run), and `--backup-dir <mirrorPath>.removed/<time>`: a file gone from the
    source is moved aside and deleted after `keepRemovedDays` (30).
+   Before that, files a previous run found not matching their name are
+   deleted from the copy (with `--immutable` rclone would refuse to replace
+   them), so this copy fetches them again whole.
 2. Every new file under `data/`, `index/` and `snapshots/` is hashed: restic names
    them by the SHA-256 of their contents, so a mismatch is corruption, found
    without the password. Verified files are remembered and not hashed again.

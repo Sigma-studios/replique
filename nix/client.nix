@@ -244,6 +244,12 @@ let
           default = 30;
           description = "Mirror: days files gone from the source are kept.";
         };
+        mirrorMinAge = mkOption {
+          type = types.str;
+          default = "15m";
+          example = "1h";
+          description = "Mirror: files on the source younger than this wait for the next run, as they may still be uploading (rclone `--min-age`; \"0\" copies everything).";
+        };
         mirrorFrom = mkOption {
           type = types.nullOr types.str;
           default = null;
@@ -288,6 +294,7 @@ let
       removed_path = job.mirrorRemovedPath;
       keep_removed_days = job.keepRemovedDays;
       mirror_from = job.mirrorFrom;
+      mirror_min_age = job.mirrorMinAge;
     };
 
   configFile = pkgs.writeText "replique-client.json" (

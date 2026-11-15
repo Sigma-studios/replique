@@ -47,6 +47,7 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
             "mirror_source": "dev_PHONE",
             "mirror_path": copy,
             "mirror_from": phone,
+            "mirror_min_age": "0",
         }}
     }));
     assert_eq!(c.run(&["mirror", "phone"]).status.code(), Some(0));
@@ -78,6 +79,31 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
         assert_eq!(spec.rules.retention, None);
     });
 
+    // A copy cut short (taken while the source was still writing it) is
+    // dropped and copied again whole, although rclone runs --immutable.
+    let damaged = walkdir(&copy.join("data"))
+        .into_iter()
+        .next()
+        .expect("a pack in the copy");
+    let whole = fs::read(&damaged).unwrap();
+    // restic's files are read-only; the damage needs write access.
+    let mut perms = fs::metadata(&damaged).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    fs::set_permissions(&damaged, perms).unwrap();
+    fs::write(&damaged, &whole[..whole.len() / 2]).unwrap();
+    assert_eq!(c.run(&["run", "phone"]).status.code(), Some(0));
+    assert_eq!(fs::read(&damaged).unwrap(), whole, "copied again whole");
+    let healed = mock.with(|r| {
+        r.runs_of(RunKind::Mirror)
+            .last()
+            .unwrap()
+            .finish
+            .clone()
+            .unwrap()
+    });
+    assert_eq!(healed.status, RunStatus::Success);
+
     // A second snapshot on the phone, and the first one forgotten there: the
     // copy follows, and keeps the forgotten snapshot's file aside.
     write(&src, "DCIM/2.jpg", "photo two");
@@ -90,7 +116,7 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
     restic(&phone, PHONE_PASSWORD, &["forget", "--quiet", &old]);
     assert_eq!(c.run(&["run", "phone"]).status.code(), Some(0));
 
-    let second = mock.with(|r| r.runs_of(RunKind::Mirror)[1].finish.clone().unwrap());
+    let second = mock.with(|r| r.runs_of(RunKind::Mirror)[2].finish.clone().unwrap());
     let m2 = second.mirror.unwrap();
     assert_eq!(m2.snapshot_ids, snapshot_ids(&phone, PHONE_PASSWORD));
     assert!(!m2.snapshot_ids.contains(&old));
@@ -107,7 +133,7 @@ fn mirror_copies_verifies_and_keeps_removed_files() {
     let bogus = format!("{:x}", Sha256::digest(b"what the name promises"));
     fs::write(phone.join("index").join(&bogus), b"something else").unwrap();
     assert_eq!(c.run(&["run", "phone"]).status.code(), Some(1));
-    let third = mock.with(|r| r.runs_of(RunKind::Mirror)[2].finish.clone().unwrap());
+    let third = mock.with(|r| r.runs_of(RunKind::Mirror)[3].finish.clone().unwrap());
     assert_eq!(third.status, RunStatus::Failed);
     assert_eq!(
         third.mirror.unwrap().hash_mismatches,

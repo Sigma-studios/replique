@@ -96,6 +96,10 @@ pub struct JobConfig {
     /// (a repository already on a local disk or a NAS share, tests).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mirror_from: Option<String>,
+    /// Files on the source younger than this are left for the next run
+    /// (rclone's `--min-age`; `15m` when absent, `0` to copy everything).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mirror_min_age: Option<String>,
 }
 
 fn backup() -> JobKind {
@@ -128,6 +132,7 @@ impl Default for JobConfig {
             removed_path: None,
             keep_removed_days: DEFAULT_KEEP_REMOVED_DAYS,
             mirror_from: None,
+            mirror_min_age: None,
         }
     }
 }

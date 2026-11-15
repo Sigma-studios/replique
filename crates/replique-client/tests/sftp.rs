@@ -163,7 +163,7 @@ fn pair_backup_and_mirror_over_sftp() {
         "server": mock.url,
         "jobs": {
             "home": { "paths": [src], "retention": { "policy": "keep-deleted" }, "check_subset": "50%" },
-            "phone": { "kind": "mirror", "mirror_source": "dev_PHONE", "mirror_path": root.join("phone") },
+            "phone": { "kind": "mirror", "mirror_source": "dev_PHONE", "mirror_path": root.join("phone"), "mirror_min_age": "0" },
         }
     }));
     assert_eq!(c.run(&["run", "home"]).status.code(), Some(0));
