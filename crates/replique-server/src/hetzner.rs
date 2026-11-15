@@ -159,19 +159,31 @@ impl Hetzner {
         body: Option<serde_json::Value>,
     ) -> anyhow::Result<T> {
         let url = format!("{}{path}", self.base);
-        let mut request = self
-            .http
-            .request(method.clone(), &url)
-            .bearer_auth(self.token.expose());
-        if let Some(body) = &body {
-            request = request.json(body);
-        }
-        let response = request
-            .send()
-            .await
-            .with_context(|| format!("{method} {path}"))?;
-        let status = response.status();
-        let text = response.text().await?;
+        let started = std::time::Instant::now();
+        let (status, text) = loop {
+            let mut request = self
+                .http
+                .request(method.clone(), &url)
+                .bearer_auth(self.token.expose());
+            if let Some(body) = &body {
+                request = request.json(body);
+            }
+            let response = request
+                .send()
+                .await
+                .with_context(|| format!("{method} {path}"))?;
+            let status = response.status();
+            let text = response.text().await?;
+            // While an action runs, the box is locked: Hetzner answers 423 to
+            // anything else, reads of the sub-account just created included (seen
+            // on a real box). It clears when the action ends, so wait for it.
+            if status == StatusCode::LOCKED && started.elapsed() < self.action_timeout {
+                tokio::time::sleep(self.poll_every.max(std::time::Duration::from_millis(500)))
+                    .await;
+                continue;
+            }
+            break (status, text);
+        };
         if !status.is_success() {
             #[derive(Deserialize)]
             struct Wrapper {
@@ -336,8 +348,20 @@ impl Hetzner {
                 Some(body),
             )
             .await?;
-        self.wait(w.action).await?;
-        self.subaccount(box_id, w.subaccount.id).await
+        let id = w.subaccount.id;
+        let ready = async {
+            self.wait(w.action).await?;
+            self.subaccount(box_id, id).await
+        }
+        .await;
+        if ready.is_err() {
+            // It exists on the box but nothing will ever record it: remove it
+            // rather than leave a stray sub-account behind.
+            if let Err(e) = self.delete_subaccount(box_id, id).await {
+                tracing::warn!("removing sub-account {id} after a failed creation: {e:#}");
+            }
+        }
+        ready
     }
 
     pub async fn delete_subaccount(&self, box_id: u64, id: u64) -> anyhow::Result<()> {

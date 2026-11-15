@@ -293,7 +293,7 @@ fn add_form(ctx: &Ctx, app: &App, error: Option<&str>, name: &str) -> Html<Strin
             h1 { "Add a device" }
             @if let Some(e) = error { div.notice.error { (e) } }
             div.card {
-                form.stack method="post" action="/devices" {
+                form.stack method="post" action="/devices" data-busy="Creating the sub-accounts on the Storage Box… (about 30 s)" {
                     (csrf_field(ctx))
                     label { "Name" input type="text" name="name" required maxlength="64" value=(name) placeholder="PC, Téléphone…"; }
                     label { "Kind"

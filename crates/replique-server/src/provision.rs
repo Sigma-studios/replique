@@ -85,14 +85,18 @@ pub struct NewDevice {
 
 /// Creates the device's sub-accounts and a pairing code; returns the device id.
 pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String> {
+    // One at a time, like pairing: each sub-account is a Hetzner action that
+    // locks the box for about ten seconds, and two forms submitted together
+    // would otherwise race for the same slug.
+    let _guard = app.pairing.lock().await;
     let name = new.name.trim().to_string();
     if name.is_empty() || name.chars().count() > 64 {
         bail!("Give the device a name of 1 to 64 characters.");
     }
     let base = replique_proto::slugify(&name);
-    // A home left on the box by a removed device (its data kept, or its
-    // folder emptied) must not be reused: it may still hold that device's
-    // backups or keys.
+    // A home left on the box by a removed device must not be reused if it
+    // still holds that device's backups or keys. An empty one (data deleted,
+    // or a creation that failed) is fine to take again.
     let on_box = if new.adopt.is_none() && !simulated(app) {
         existing_device_folders(app).await?
     } else {
@@ -100,7 +104,9 @@ pub async fn add_device(app: &Arc<App>, new: NewDevice) -> anyhow::Result<String
     };
     let mut slug = base.clone();
     let mut n = 2;
-    while app.store.slug_taken(&app.owner.id, &slug)? || on_box.contains(&slug) {
+    while app.store.slug_taken(&app.owner.id, &slug)?
+        || (on_box.contains(&slug) && home_occupied(app, &slug).await?)
+    {
         slug = format!("{base}-{n}");
         n += 1;
     }
@@ -267,6 +273,18 @@ async fn existing_device_folders(app: &App) -> anyhow::Result<Vec<String>> {
         .folders(box_id, &path)
         .await
         .context("listing folders on the box")
+}
+
+/// Whether a device folder on the box holds anything a new device must not
+/// inherit: a repository or keys (both folders, which the API lists).
+async fn home_occupied(app: &App, slug: &str) -> anyhow::Result<bool> {
+    let (hetzner, box_id) = app.hetzner()?;
+    let home = replique_proto::sub_account_home(&app.owner.slug, slug);
+    let inside = hetzner
+        .folders(box_id, &home)
+        .await
+        .context("listing folders on the box")?;
+    Ok(!inside.is_empty())
 }
 
 fn insert_code(app: &App, device_id: &str, secrets: &PairingSecrets) -> anyhow::Result<String> {

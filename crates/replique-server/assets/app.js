@@ -19,6 +19,20 @@
     // EventSource reconnects by itself; nothing to do on error.
   }
 
+  // Forms marked data-busy="…" say so while the server works, and cannot be
+  // sent twice: adding a device takes Hetzner half a minute.
+  document.addEventListener("submit", function (e) {
+    var form = e.target.closest("form[data-busy]");
+    if (!form) return;
+    if (form.dataset.sent) { e.preventDefault(); return; }
+    form.dataset.sent = "1";
+    var b = form.querySelector("button[type=submit]");
+    if (b) {
+      // Disabled after this tick, so the browser still sends the form.
+      setTimeout(function () { b.disabled = true; b.textContent = form.dataset.busy; }, 0);
+    }
+  });
+
   // Copy buttons: <button data-copy="text">.
   document.addEventListener("click", function (e) {
     var b = e.target.closest("[data-copy]");

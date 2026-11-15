@@ -178,3 +178,26 @@ async fn failed_actions_and_errors_surface() {
     // The token never appears in errors.
     assert!(!format!("{err:#}").contains("wrong"));
 }
+
+#[tokio::test]
+async fn a_locked_box_is_waited_for() {
+    // The real box answers 423 to a read of the sub-account it just created
+    // while its action winds down; creating must wait, not fail.
+    let (mock, h) = client().await;
+    *mock.locked_reads.lock().unwrap() = 3;
+    let sub = h
+        .create_subaccount(
+            MOCK_BOX,
+            NewSubaccount {
+                home_directory: "replique/sigma/phone",
+                password: &Secret::new("Some-pass-1234".into()),
+                access_settings: AccessSettings::ssh_only(false),
+                description: "test",
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(sub.home_directory, "replique/sigma/phone");
+    assert_eq!(*mock.locked_reads.lock().unwrap(), 0);
+    assert_eq!(mock.subaccounts().len(), 1);
+}

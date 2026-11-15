@@ -281,6 +281,9 @@ pub struct MockHetzner {
     /// Every folder ever made a home. Like the real box, folders outlive the
     /// sub-accounts living in them.
     folders: Mutex<std::collections::BTreeSet<String>>,
+    /// Answer this many reads of a sub-account with 423, as the real box does
+    /// right after creating one.
+    pub locked_reads: Mutex<u32>,
 }
 
 pub const MOCK_TOKEN: &str = "test-token";
@@ -489,6 +492,17 @@ async fn get_sub(
         format!("/storage_boxes/{id}/subaccounts/{sid}"),
         Value::Null,
     );
+    {
+        let mut locked = m.locked_reads.lock().unwrap();
+        if *locked > 0 {
+            *locked -= 1;
+            return (
+                StatusCode::LOCKED,
+                axum::Json(json!({"error": {"code": "locked", "message": "Action is locked", "details": {}}})),
+            )
+                .into_response();
+        }
+    }
     match m.subs.lock().unwrap().get(&sid) {
         Some(s) => axum::Json(json!({ "subaccount": s })).into_response(),
         None => (
