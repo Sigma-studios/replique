@@ -100,6 +100,14 @@ fn progress_block(run: &Run) -> Markup {
             @if p.total_bytes > 0 {
                 " · " (fmt::bytes(p.bytes_done as i64)) " of " (fmt::bytes(p.total_bytes as i64))
             }
+            @if let Some(rate) = p.upload_bytes_per_sec {
+                " · ↑ " (fmt::bytes(rate as i64)) "/s"
+                @if let Some(sent) = p.bytes_uploaded { " (" (fmt::bytes(sent as i64)) " sent)" }
+            } @else if p.seconds_elapsed > 0 && p.bytes_done > 0 {
+                // Without a network count (the PC's restic, a mirror), what it
+                // read per second on average: an upper bound for the upload.
+                " · " (fmt::bytes((p.bytes_done / p.seconds_elapsed) as i64)) "/s read"
+            }
             @if let Some(left) = p.seconds_remaining {
                 " · ETA " (fmt::duration(left as i64))
             }
@@ -858,7 +866,8 @@ pub async fn rules_form(
                 div.card {
                     div.grid {
                         label { "Job name" input type="text" name="job" value=(config.job) required pattern="[a-z0-9][a-z0-9_-]{0,63}"; }
-                        label { "Every (hours)" input type="number" name="interval_hours" min="1" value=(config.interval_hours) required; }
+                        label { "Every night at" span.hint { "the phone's time; empty: every so many hours" } input type="time" name="daily_at" value=[config.daily_at.as_deref()]; }
+                        label { "Every (hours)" span.hint { "when no time is set" } input type="number" name="interval_hours" min="1" value=(config.interval_hours) required; }
                         label { "Minimum battery (%)" span.hint { "ignored while charging" } input type="number" name="min_battery_percent" min="0" max="100" value=[config.conditions.min_battery_percent]; }
                     }
                     div.row style="margin-top: 0.6rem" {
@@ -924,6 +933,15 @@ pub fn parse_rules(pairs: &[(String, String)]) -> Result<DeviceConfig, String> {
         .and_then(|v| v.trim().parse().ok())
         .filter(|h| *h >= 1)
         .ok_or("Every (hours) must be at least 1.")?;
+    let daily_at = match get("daily_at").map(str::trim).filter(|v| !v.is_empty()) {
+        // Browsers send `HH:MM` for a time field; some add `:SS`.
+        Some(v) => {
+            let v = v.get(..5).unwrap_or(v);
+            replique_proto::parse_daily_at(v).ok_or("Every night at: a time such as 02:00.")?;
+            Some(v.to_string())
+        }
+        None => None,
+    };
     let min_battery_percent = match get("min_battery_percent")
         .map(str::trim)
         .filter(|v| !v.is_empty())
@@ -977,6 +995,7 @@ pub fn parse_rules(pairs: &[(String, String)]) -> Result<DeviceConfig, String> {
             min_battery_percent,
         },
         interval_hours,
+        daily_at,
         retention: Retention::NeverPrune,
     })
 }
@@ -1637,6 +1656,7 @@ mod tests {
         let pairs: Vec<(String, String)> = [
             ("job", "phone"),
             ("interval_hours", "12"),
+            ("daily_at", "02:30:00"),
             ("unmetered_only", "1"),
             ("excludes", ".thumbnails\n\n.cache"),
             ("path_0", "/storage/emulated/0/DCIM"),
@@ -1657,5 +1677,14 @@ mod tests {
         assert_eq!(c.folders[0].max_file_size_bytes, Some(500_000_000));
         assert_eq!(c.folders[0].exclude_extensions, ["tmp", "log"]);
         assert_eq!(c.retention, Retention::NeverPrune);
+        assert_eq!(c.daily_at.as_deref(), Some("02:30"));
+        let bad: Vec<(String, String)> = pairs
+            .iter()
+            .map(|(k, v)| {
+                let v = if k == "daily_at" { "25:00" } else { v.as_str() };
+                (k.clone(), v.to_string())
+            })
+            .collect();
+        assert!(parse_rules(&bad).is_err());
     }
 }

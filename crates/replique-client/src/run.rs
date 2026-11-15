@@ -198,6 +198,11 @@ fn progress_of(s: Status) -> Progress {
         error_count: s.error_count,
         current_files: s.current_files.unwrap_or_default(),
         phase: None,
+        // restic does not say what it sent, and the network counters of a
+        // computer are shared with everything else running on it; the website
+        // shows the rate restic reads at instead.
+        bytes_uploaded: None,
+        upload_bytes_per_sec: None,
     }
 }
 

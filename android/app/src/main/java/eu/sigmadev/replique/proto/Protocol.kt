@@ -282,6 +282,8 @@ data class DeviceConfig(
     val excludes: List<String> = emptyList(),
     val conditions: Conditions = Conditions(),
     @SerialName("interval_hours") val intervalHours: Int,
+    /** `HH:MM` in the phone's time zone: run once a day then, instead of every [intervalHours]. */
+    @SerialName("daily_at") val dailyAt: String? = null,
     val retention: Retention,
 ) {
     companion object {
@@ -367,6 +369,10 @@ data class Progress(
     @SerialName("error_count") val errorCount: Long = 0,
     @SerialName("current_files") val currentFiles: List<String> = emptyList(),
     val phase: String? = null,
+    /** Bytes sent over the network since the run started (Android's per-app counters). */
+    @SerialName("bytes_uploaded") val bytesUploaded: Long? = null,
+    /** Upload rate over the last few seconds. */
+    @SerialName("upload_bytes_per_sec") val uploadBytesPerSec: Long? = null,
 )
 
 @Serializable

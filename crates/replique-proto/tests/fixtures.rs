@@ -124,6 +124,10 @@ fn device_config() {
     let config: DeviceConfig = round_trip("device_config.json");
     assert_eq!(config.retention, Retention::NeverPrune);
     assert_eq!(config.conditions.min_battery_percent, Some(30));
+    assert_eq!(
+        config.daily_at.as_deref().and_then(parse_daily_at),
+        Some((2, 0))
+    );
     assert_eq!(config.folders.len(), 3);
     // The default the server serves must survive the same trip.
     let default = DeviceConfig::android_default();
@@ -142,6 +146,7 @@ fn runs() {
     let _: StartRunReply = round_trip("run_start_reply.json");
     let progress: Progress = round_trip("run_progress.json");
     assert_eq!(progress.seconds_remaining, Some(12153));
+    assert_eq!(progress.upload_bytes_per_sec, Some(6_912_345));
     let phase: Progress = round_trip("run_progress_phase.json");
     assert_eq!(phase.seconds_remaining, None);
 

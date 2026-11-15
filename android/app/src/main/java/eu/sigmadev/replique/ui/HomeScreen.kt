@@ -170,6 +170,10 @@ private fun LiveProgress(live: eu.sigmadev.replique.backup.LiveRun) {
     LinearProgressIndicator(progress = { p.percentDone.toFloat() }, modifier = Modifier.fillMaxWidth())
     Text("${Format.percent(p.percentDone)} · ${Format.bytes(p.bytesDone)} sur ${Format.bytes(p.totalBytes)}")
     Text("${Format.count(p.filesDone)} sur ${Format.files(p.totalFiles)}", style = MaterialTheme.typography.bodySmall)
+    p.uploadBytesPerSec?.let { rate ->
+        val sent = p.bytesUploaded?.let { " · ${Format.bytes(it)} envoyés" } ?: ""
+        Text("Envoi : ${Format.bytes(rate)}/s$sent", style = MaterialTheme.typography.bodySmall)
+    }
     p.secondsRemaining?.let { Text("Encore environ ${Format.duration(it)}", style = MaterialTheme.typography.bodySmall) }
     p.currentFiles.firstOrNull()?.let {
         Text(it.substringAfter("/storage/emulated/0/"), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)

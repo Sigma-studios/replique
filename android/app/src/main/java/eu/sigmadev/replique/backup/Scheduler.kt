@@ -35,6 +35,20 @@ object Scheduler {
      * website does not trigger an immediate run.
      */
     fun schedule(context: Context, config: DeviceConfig, initialDelay: Duration = Duration.ZERO) {
+        val daily = DailyTime.parse(config.dailyAt)
+        if (daily != null) {
+            // A time of day: the first run at the next such time, then every
+            // 24 hours. Enqueued afresh each time, because UPDATE keeps the old
+            // period's start and the time may just have changed.
+            val request = PeriodicWorkRequestBuilder<BackupWorker>(24, TimeUnit.HOURS)
+                .setConstraints(constraints(config.conditions))
+                .setInitialDelay(DailyTime.delayUntil(daily).toMillis(), TimeUnit.MILLISECONDS)
+                .addTag(SCHEDULED)
+                .build()
+            WorkManager.getInstance(context)
+                .enqueueUniquePeriodicWork(SCHEDULED, ExistingPeriodicWorkPolicy.CANCEL_AND_REENQUEUE, request)
+            return
+        }
         val hours = config.intervalHours.coerceAtLeast(1).toLong()
         val request = PeriodicWorkRequestBuilder<BackupWorker>(hours, TimeUnit.HOURS)
             .setConstraints(constraints(config.conditions))
@@ -50,9 +64,11 @@ object Scheduler {
      * scheduling earlier would start a run that can only fail.
      */
     fun ensureScheduled(context: Context, config: DeviceConfig) {
-        val hours = config.intervalHours.coerceAtLeast(1).toLong()
+        val daily = DailyTime.parse(config.dailyAt)
+        val hours = if (daily != null) 24L else config.intervalHours.coerceAtLeast(1).toLong()
         val request = PeriodicWorkRequestBuilder<BackupWorker>(hours, TimeUnit.HOURS)
             .setConstraints(constraints(config.conditions))
+            .apply { if (daily != null) setInitialDelay(DailyTime.delayUntil(daily).toMillis(), TimeUnit.MILLISECONDS) }
             .addTag(SCHEDULED)
             .build()
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(SCHEDULED, ExistingPeriodicWorkPolicy.KEEP, request)
@@ -86,6 +102,7 @@ object Scheduler {
         // itself; it is scheduled again right away, a full period from now,
         // so that it does not start over the moment the user stopped it.
         wm.cancelUniqueWork(SCHEDULED)
+        // With a daily time, `schedule` already waits for the next one.
         schedule(context, config, Duration.ofHours(config.intervalHours.coerceAtLeast(1).toLong()))
     }
 

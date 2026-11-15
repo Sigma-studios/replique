@@ -8,6 +8,8 @@
   "total_bytes": 452381234567,
   "bytes_done": 190588123456,
   "error_count": 2,
+  "bytes_uploaded": 171234567890,
+  "upload_bytes_per_sec": 6912345,
   "current_files": [
     "/home/sigma/Photos/2019/IMG_2041.CR2",
     "/home/sigma/Projects/fractale/assets/terrain.blend"

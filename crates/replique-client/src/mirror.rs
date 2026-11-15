@@ -368,6 +368,10 @@ fn sync(
                 total_bytes: s.total_bytes,
                 bytes_done: s.bytes,
                 error_count: s.errors,
+                // A mirror downloads; the website shows rclone's own rate from
+                // `bytes_done` over time instead.
+                bytes_uploaded: None,
+                upload_bytes_per_sec: None,
                 current_files: s
                     .transferring
                     .unwrap_or_default()

@@ -58,7 +58,8 @@ object Notifications {
     private fun progressText(live: LiveRun): String {
         val p = live.progress ?: return live.phase ?: "Préparation…"
         val eta = p.secondsRemaining?.let { " · encore ${Format.duration(it)}" } ?: ""
-        return "${Format.percent(p.percentDone)} · ${Format.bytes(p.bytesDone)} sur ${Format.bytes(p.totalBytes)}$eta"
+        val rate = p.uploadBytesPerSec?.let { " · ↑ ${Format.bytes(it)}/s" } ?: ""
+        return "${Format.percent(p.percentDone)} · ${Format.bytes(p.bytesDone)} sur ${Format.bytes(p.totalBytes)}$rate$eta"
     }
 
     fun problem(context: Context, title: String, text: String) {

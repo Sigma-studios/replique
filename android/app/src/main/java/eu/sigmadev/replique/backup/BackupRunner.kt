@@ -71,6 +71,7 @@ class BackupRunner(
     private val resticVersion: String,
     private val clock: () -> Instant = Instant::now,
     private val onConfigChanged: (DeviceConfig) -> Unit = {},
+    private val uploadMeter: () -> UploadMeter = { UploadMeter() },
 ) {
     /**
      * Runs a backup then a check. [deadline] is when the backup must stop
@@ -139,6 +140,7 @@ class BackupRunner(
         val unreadable = mutableListOf<String>()
         var summary: BackupSummary? = null
         val lastProgressSent = AtomicLong(0)
+        val meter = uploadMeter()
         var atDeadline = false
 
         fun finishWith(status: RunStatus, exitCode: Int, message: String?) = FinishRun(
@@ -168,7 +170,9 @@ class BackupRunner(
             val onMessage: (ResticMessage) -> Unit = { message ->
                 when (message) {
                     is ResticMessage.Status -> {
+                        val sent = meter.read()
                         val progress = message.status.toProgress(clock())
+                            .copy(bytesUploaded = sent?.sent, uploadBytesPerSec = sent?.bytesPerSec)
                         live.value = live.value.copy(progress = progress, phase = null)
                         maybeSendProgress(api, clientRunId, progress, lastProgressSent)
                     }
@@ -373,8 +377,9 @@ class BackupRunner(
         /** The job the phone declares: its rules as the website shows them. */
         fun jobSpec(config: DeviceConfig) = JobSpec(
             kind = JobKind.Backup,
-            schedule = "every ${config.intervalHours}h",
-            expectedIntervalSecs = config.intervalHours * 3600L,
+            // A daily time reads as systemd's OnCalendar, like the PC's jobs.
+            schedule = DailyTime.parse(config.dailyAt)?.let { "*-*-* $it" } ?: "every ${config.intervalHours}h",
+            expectedIntervalSecs = if (DailyTime.parse(config.dailyAt) != null) 86_400L else config.intervalHours * 3600L,
             rules = JobRules(
                 paths = config.folders.map { it.path },
                 excludes = config.excludes + config.folders.flatMap { it.excludes },

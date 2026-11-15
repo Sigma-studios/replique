@@ -70,6 +70,14 @@ pub struct Progress {
     /// `diffing snapshots`, `verifying packs`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub phase: Option<String>,
+    /// Bytes this device sent over the network since the run started, where it
+    /// can tell (Android counts them per app). restic's `bytes_done` counts what
+    /// it read, unchanged files included, so it is no upload measure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes_uploaded: Option<u64>,
+    /// The upload rate over the device's last few seconds, in bytes per second.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upload_bytes_per_sec: Option<u64>,
 }
 
 /// How a run ended. Devices derive it from restic's exit code with

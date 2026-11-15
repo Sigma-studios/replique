@@ -199,7 +199,9 @@ files, and caches; daily; on unmetered networks while charging; `never-prune`.
 
 Each folder can add its own excludes, a maximum file size, extensions to skip, or
 a list of the only extensions to keep. `conditions` apply to scheduled runs, not
-to "Back up now".
+to "Back up now". `daily_at` (`"02:00"`, the phone's own time) runs the backup
+once a day at that time instead of every `interval_hours`; a run due while the
+conditions are not met waits for them.
 
 ## Runs
 
@@ -246,6 +248,11 @@ server may drop faster ones. Never spooled. Reply: `{"ok": true}`.
 
 Runs that are not a restic backup (a `keep-deleted` diff, a mirror's hash check)
 set `phase` to a short label and fill what they can.
+
+A device that can count its own network traffic adds `bytes_uploaded` (sent
+since the run started) and `upload_bytes_per_sec` (over its last few seconds).
+The Android app does, from the system's per-app counters; restic's `bytes_done`
+counts what it read, unchanged files included, so it is no upload measure.
 
 ### `POST /api/v1/runs/{id}/finish`
 

@@ -20,8 +20,13 @@ pub struct DeviceConfig {
     #[serde(default)]
     pub conditions: Conditions,
     /// Hours between two scheduled runs (WorkManager's minimum is 15 minutes, so
-    /// anything from 1 up works).
+    /// anything from 1 up works). Ignored when `daily_at` is set.
     pub interval_hours: u32,
+    /// Run once a day at this time instead, `HH:MM` in the phone's own time
+    /// zone (`02:00`: every night). The conditions still apply: a run due while
+    /// the phone is off its charger waits until it is plugged in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daily_at: Option<String>,
     /// The phone always uses `never-prune`; the field is here so the website and
     /// the app agree on it explicitly.
     pub retention: Retention,
@@ -107,7 +112,32 @@ impl DeviceConfig {
                 .collect(),
             conditions: Conditions::default(),
             interval_hours: 24,
+            daily_at: None,
             retention: Retention::NeverPrune,
         }
+    }
+}
+
+/// Reads a `daily_at` time: `HH:MM`, 00:00 to 23:59.
+pub fn parse_daily_at(s: &str) -> Option<(u8, u8)> {
+    let (h, m) = s.trim().split_once(':')?;
+    if h.len() != 2 || m.len() != 2 {
+        return None;
+    }
+    let (h, m) = (h.parse::<u8>().ok()?, m.parse::<u8>().ok()?);
+    (h < 24 && m < 60).then_some((h, m))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn daily_times() {
+        assert_eq!(parse_daily_at("02:00"), Some((2, 0)));
+        assert_eq!(parse_daily_at(" 23:59 "), Some((23, 59)));
+        assert_eq!(parse_daily_at("24:00"), None);
+        assert_eq!(parse_daily_at("2:00"), None);
+        assert_eq!(parse_daily_at("02h00"), None);
     }
 }

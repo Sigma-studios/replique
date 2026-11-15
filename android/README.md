@@ -97,6 +97,14 @@ when the allowance is back. restic writes an index of what it has uploaded at
 least every ten minutes, so the next run skips everything already sent. Opening
 the app resets the allowance (Android does the same).
 
+## When it runs
+
+Daily by default, as soon as the phone is charging on Wi-Fi. In the phone rules
+on the website, **Every night at** picks a time instead (`02:00`, the phone's
+own time): the backup starts then, or as soon as the conditions are met after
+it. Home shows the next run, and during a run the upload rate (`Envoi`), from
+Android's count of what the app sent; the website shows it too.
+
 ## What is backed up, and what is not
 
 By default (until the rules are edited on the website), everything in shared

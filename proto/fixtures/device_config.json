@@ -22,5 +22,6 @@
   ],
   "conditions": { "unmetered_only": true, "charging_only": true, "min_battery_percent": 30 },
   "interval_hours": 24,
+  "daily_at": "02:00",
   "retention": { "policy": "never-prune" }
 }
