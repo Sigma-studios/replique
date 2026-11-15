@@ -106,6 +106,8 @@ fn backup(
         }
     }
 
+    restic.clear_stale_locks();
+
     let exclude_file = match write_excludes(state, name, job) {
         Ok(p) => p,
         Err(e) => {
@@ -267,6 +269,7 @@ fn prune(reporter: &Reporter, restic: &Restic, job: &JobConfig, stop: &Stop) -> 
 
 fn check(reporter: &Reporter, restic: &Restic, subset: &str, stop: &Stop) -> i32 {
     let mut run = reporter.start(RunKind::Check);
+    restic.clear_stale_locks();
     let snapshot_ids = match restic.snapshots(&[]) {
         Ok(s) => s.into_iter().map(|s| s.id).collect::<Vec<_>>(),
         Err(o) => {
@@ -295,6 +298,12 @@ fn check(reporter: &Reporter, restic: &Restic, subset: &str, stop: &Stop) -> i32
             num_errors = v.get("num_errors").and_then(Value::as_u64).unwrap_or(0);
         }
     });
+    // restic 0.19 prints a summary with `num_errors: 1` even when it could not
+    // lock the repository and checked nothing (exit 11); only a check that ran
+    // (exit 0, or 1 for errors found) has a count worth reporting.
+    if !matches!(outcome.code, 0 | 1) {
+        num_errors = 0;
+    }
     let finish = FinishRun {
         check: Some(CheckSummary {
             read_data_subset: Some(subset.to_string()),

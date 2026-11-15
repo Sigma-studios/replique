@@ -135,6 +135,25 @@ impl Restic {
         c
     }
 
+    /// Removes locks left by restic processes that are gone (killed by a
+    /// reboot, a stopped unit, the OOM killer). restic does not take those over
+    /// by itself: an exclusive one from a killed prune refuses every later
+    /// backup, and any one refuses every check. Without `--remove-all`, unlock
+    /// only removes stale locks (same host and the process gone, or not
+    /// refreshed for 30 minutes), so it never breaks a live run. A failure here
+    /// is left for the real command to report.
+    pub fn clear_stale_locks(&self) {
+        if self.no_lock {
+            return;
+        }
+        if let Ok(out) = self.command(&["unlock"]).stdin(Stdio::null()).output() {
+            let text = String::from_utf8_lossy(&out.stdout);
+            if let Some(line) = text.lines().find(|l| l.contains("removed")) {
+                crate::log!("{}", line.trim());
+            }
+        }
+    }
+
     /// `restic version`'s number, e.g. `0.19.1`.
     pub fn version(&self) -> Option<String> {
         let out = Command::new(&self.binary).arg("version").output().ok()?;

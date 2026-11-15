@@ -403,6 +403,41 @@ async fn device_added_paired_and_reporting() {
         pc.finish(&next, &finish(RunStatus::Success, 0)).await,
         StatusCode::OK
     );
+    // A check that could not lock the repository is a failed run, not an
+    // integrity problem, even with restic 0.19's `num_errors: 1` on the way out.
+    let locked = pc
+        .start("home", RunKind::Check, &uuid(), chrono::Utc::now())
+        .await;
+    let mut report_locked = finish(RunStatus::LockFailed, 11);
+    report_locked.check = Some(CheckSummary {
+        read_data_subset: Some("5%".into()),
+        num_errors: 1,
+        snapshot_ids: vec![],
+    });
+    assert_eq!(pc.finish(&locked, &report_locked).await, StatusCode::OK);
+    let open: Vec<String> = server
+        .app
+        .store
+        .open_alerts()
+        .unwrap()
+        .into_iter()
+        .map(|a| a.title)
+        .collect();
+    assert!(
+        open.iter()
+            .any(|t| t.contains("check failed (repository locked)")),
+        "{open:?}"
+    );
+    assert!(!open.iter().any(|t| t.contains("integrity")), "{open:?}");
+
+    // A clean check afterwards clears it.
+    let clean = pc
+        .start("home", RunKind::Check, &uuid(), chrono::Utc::now())
+        .await;
+    assert_eq!(
+        pc.finish(&clean, &finish(RunStatus::Success, 0)).await,
+        StatusCode::OK
+    );
 
     let (_, overview) = browser.get("/fragments/overview").await;
     assert!(

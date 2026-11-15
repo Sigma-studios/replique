@@ -215,9 +215,14 @@ pub async fn on_run_finished(
         .or_else(|| finish.errors.first().map(|e| e.message.clone()))
         .unwrap_or_default();
     let integrity_problem = match run.kind {
+        // Only a check that ran says anything about integrity: restic exits 1
+        // when it found errors. A check that could not start (locked, wrong
+        // password, network) is a failed run, reported as such below, even if
+        // restic printed `num_errors: 1` on its way out (0.19 does when locked).
         RunKind::Check => {
-            finish.status == RunStatus::Failed
-                || finish.check.as_ref().is_some_and(|c| c.num_errors > 0)
+            matches!(finish.status, RunStatus::Success | RunStatus::Failed)
+                && (finish.exit_code == 1
+                    || finish.check.as_ref().is_some_and(|c| c.num_errors > 0))
         }
         RunKind::Mirror => finish
             .mirror

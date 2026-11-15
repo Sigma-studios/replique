@@ -226,7 +226,20 @@ class BackupRunner(
             if (failed != null) return failed.exitCode to (failed.reason() ?: "restic init failed")
             store.update { s -> s.copy(pairing = s.pairing?.copy(repositoryReady = true)) }
         }
+        clearStaleLocks(restic)
         return null
+    }
+
+    /**
+     * Removes locks left by a restic that is gone. Android kills the app's
+     * processes without warning (an update, memory pressure, a force stop), and
+     * restic does not take over such a lock by itself: the next check then
+     * fails "locked". Without `--remove-all`, unlock only removes stale locks
+     * (this host and the process gone, or not refreshed for 30 minutes), so it
+     * never touches a live run. Its failure is left for the real command.
+     */
+    private suspend fun clearStaleLocks(restic: Restic) {
+        runCatching { restic.run(listOf("unlock")) }
     }
 
     private fun backupArgs(plan: BackupPlan, restic: Restic): List<String> {
@@ -251,6 +264,7 @@ class BackupRunner(
         try {
             // The ids are listed before the check: those are the snapshots the
             // check covers, and the server marks exactly them as verified.
+            clearStaleLocks(restic)
             val (listing, snapshots) = restic.snapshots()
             if (listing.exitCode != 0) {
                 val status = RunStatus.fromResticExit(listing.exitCode)
@@ -273,6 +287,10 @@ class BackupRunner(
                 }
             }
             val status = RunStatus.fromResticExit(result.exitCode)
+            // restic 0.19 prints `num_errors: 1` even when it could not lock
+            // the repository and checked nothing (exit 11): only a check that
+            // ran (exit 0, or 1 for errors found) has a count worth reporting.
+            if (result.exitCode != 0 && result.exitCode != 1) numErrors = 0
             return record(
                 api, clientRunId, RunKind.Check, startedAt,
                 FinishRun(
