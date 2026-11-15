@@ -160,6 +160,7 @@
         .catch(function () {});
     }
     load();
+    el.addEventListener("replique:reload", load);
     var scopes = (el.dataset.scopes || "").split(" ");
     document.addEventListener("replique:measured", function (e) {
       var scope = e.detail && e.detail.scope;
@@ -175,6 +176,20 @@
       resize = setTimeout(function () { if (plot) plot.setSize({ width: el.clientWidth, height: 260 }); }, 150);
     });
   }
+
+  // Range buttons (24h, 7d…) next to a chart: switch it in place, keep the
+  // choice in the address for a reload or a shared link.
+  document.addEventListener("click", function (e) {
+    var a = e.target.closest(".ranges[data-chart] a[data-range]");
+    if (!a) return;
+    var chart = document.getElementById(a.parentNode.dataset.chart);
+    if (!chart || !window.uPlot) return;
+    e.preventDefault();
+    chart.dataset.src = chart.dataset.src.replace(/range=[^&]*/, "range=" + a.dataset.range);
+    a.parentNode.querySelectorAll("a").forEach(function (o) { o.classList.toggle("active", o === a); });
+    history.replaceState(null, "", "?range=" + a.dataset.range + location.hash);
+    chart.dispatchEvent(new Event("replique:reload"));
+  });
 
   function init() {
     connect();

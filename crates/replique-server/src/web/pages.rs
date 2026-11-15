@@ -268,46 +268,85 @@ fn box_card(app: &App) -> Markup {
     }
 }
 
-fn device_card(app: &App, device: &Device) -> Markup {
+/// One row per sub-account: the device it belongs to (in its chart colour),
+/// the login, what is stored there, and every job with its last run, or its
+/// progress while it runs.
+fn account_row(app: &App, device: &Device, slot: usize) -> Markup {
     let repo = app.store.repository_of(&device.id).ok().flatten();
     let jobs = job_views(app, &device.id).unwrap_or_default();
+    let point = repo.as_ref().and_then(|r| {
+        app.store
+            .latest_measurement(&format!("repo:{}", r.id))
+            .ok()
+            .flatten()
+    });
     html! {
-        div.card {
-            div.spread {
-                h3 { a href={ "/devices/" (device.id) } { (device.name) } }
-                span.muted.small { (kind_label(device.kind)) }
+        tr {
+            td {
+                div.row style="gap: 0.45rem; flex-wrap: nowrap" {
+                    i.swatch style={ "background: var(--series-" (slot % 8 + 1) ")" } {}
+                    a href={ "/devices/" (device.id) } { strong { (device.name) } }
+                }
+                div.small.muted { (kind_label(device.kind)) }
             }
-            @if device.paired_at.is_none() {
-                p { span.status.warning { "Waiting for pairing" } " " a href={ "/devices/" (device.id) } { "Show the code" } }
-            } @else if device.revoked_at.is_some() {
-                p { span.status.critical { "Token revoked" } }
+            td.hide-narrow.small {
+                @if let Some(r) = &repo {
+                    span.mono { (r.username) }
+                    @if let Some(t) = &r.twin_username { div.muted { "read-only " span.mono { (t) } } }
+                } @else { span.muted { "–" } }
             }
-            div.row { (repo_size(app, repo.as_ref())) }
-            @if jobs.is_empty() && device.paired_at.is_some() {
-                p.muted.small { "No job declared yet." }
+            td.num {
+                @if let Some(p) = &point {
+                    strong { (fmt::bytes(p.bytes)) }
+                    div.small.muted { (p.files.unwrap_or(0)) " files · " (fmt::ago(p.at)) }
+                } @else { span.muted.small { "not measured yet" } }
             }
-            @for v in &jobs {
-                div style="margin-top: 0.6rem" {
-                    div.spread {
-                        strong { (v.job.name) }
-                        @if let Some(r) = &v.running { (status_chip(r.status)) }
-                        @else if let Some(r) = &v.last { (status_chip(r.status)) }
-                        @else { span.status { "Never run" } }
+            td.jobs {
+                @if device.paired_at.is_none() {
+                    span.status.warning { "Waiting for pairing" } " " a.small href={ "/devices/" (device.id) } { "Show the code" }
+                } @else if device.revoked_at.is_some() {
+                    span.status.critical { "Token revoked" }
+                } @else if jobs.is_empty() {
+                    span.muted.small { "No job declared yet." }
+                }
+                @for v in &jobs {
+                    div.job {
+                        div.spread {
+                            strong { (v.job.name) }
+                            @if let Some(r) = &v.running { (status_chip(r.status)) }
+                            @else if let Some(r) = &v.last { (status_chip(r.status)) }
+                            @else { span.status { "Never run" } }
+                        }
+                        @if let Some(r) = &v.running { (progress_block(r)) }
+                        @else if let Some(r) = &v.last { div { (last_run_line(r)) } }
                     }
-                    @if let Some(r) = &v.running { (progress_block(r)) }
-                    @if let Some(r) = &v.last { div { (last_run_line(r)) } }
                 }
             }
         }
     }
 }
 
-fn overview_grid(app: &App) -> anyhow::Result<Markup> {
+/// The part of the overview that follows live events: the box, then a row per
+/// sub-account. The storage chart stays outside it, so a refresh does not
+/// redraw the chart.
+fn overview_live(app: &App) -> anyhow::Result<Markup> {
     let devices = app.store.devices()?;
     Ok(html! {
-        div.grid #devices hx-get="/fragments/overview" hx-trigger="live:runs from:body, live:devices from:body, live:measured from:body, every 60s" hx-swap="outerHTML" {
-            (box_card(app))
-            @for d in &devices { (device_card(app, d)) }
+        div #devices hx-get="/fragments/overview" hx-trigger="live:runs from:body, live:devices from:body, live:measured from:body, every 60s" hx-swap="outerHTML" {
+            div.box-card { (box_card(app)) }
+            div.card.table-wrap {
+                h2 style="margin-top: 0" { "Storage accounts" }
+                @if devices.is_empty() {
+                    p.muted { "No device yet. " a href="/devices/new" { "Add the first one" } "." }
+                } @else {
+                    table.accounts {
+                        thead { tr { th { "Device" } th.hide-narrow { "Sub-account" } th.num { "Stored" } th { "Jobs" } } }
+                        // Rows keep the device list's order: the colour of a
+                        // device is its place in that list, as in every chart.
+                        tbody { @for (slot, d) in devices.iter().enumerate() { (account_row(app, d, slot)) } }
+                    }
+                }
+            }
         }
     })
 }
@@ -316,11 +355,15 @@ pub async fn overview(
     State(app): State<Arc<App>>,
     admin: Admin,
     Query(f): Query<Flash>,
+    Query(q): Query<RangeQuery>,
 ) -> WebResult {
     let ctx = Ctx::new(&app, &admin);
-    let devices = app.store.devices()?;
-    let grid = overview_grid(&app)?;
+    let live = overview_live(&app)?;
     let problems = app.store.open_alerts()?;
+    let range = q
+        .range
+        .filter(|r| RANGES.iter().any(|(k, _)| k == r))
+        .unwrap_or_else(|| "7d".into());
     Ok(page(
         "Aperçu",
         "overview",
@@ -336,17 +379,33 @@ pub async fn overview(
                     ": " (problems[0].title)
                 }
             }
-            @if devices.is_empty() {
-                div.notice { "No device yet. " a href="/devices/new" { "Add the first one" } "." }
+            (live)
+            div.card #storage {
+                div.spread {
+                    h2 style="margin: 0" { "Storage" }
+                    // Plain links, so they work without JavaScript; app.js
+                    // switches the chart in place instead of reloading.
+                    div.ranges data-chart="storage-chart" {
+                        @for (key, _) in RANGES {
+                            a href={ "/?range=" (key) "#storage" } data-range=(key) class=[(key == range).then_some("active")] { (key) }
+                        }
+                    }
+                }
+                p.small.muted style="margin: 0.3rem 0 0.6rem" { "Each repository as measured, stacked." }
+                div.chart #storage-chart data-src={ "/storage/series?scope=repos&range=" (range) } data-scopes="repo:*" {}
+                p.small.muted {
+                    "The box total comes from Hetzner's API; repositories are measured over SFTP through "
+                    (if app.config.storage_box.measure_via == MeasureVia::Twin { "their read-only twins" } else { "the main account" })
+                    ", every " (fmt::duration(app.config.measurement.every_secs as i64)) ". Points are kept every 5 minutes for 7 days, hourly for 90 days, daily forever."
+                }
             }
-            (grid)
         },
     )
     .into_response())
 }
 
 pub async fn overview_fragment(State(app): State<Arc<App>>, _admin: Admin) -> WebResult {
-    Ok(Html(overview_grid(&app)?.into_string()).into_response())
+    Ok(Html(overview_live(&app)?.into_string()).into_response())
 }
 
 // ---------------------------------------------------------------- add device
@@ -1173,64 +1232,14 @@ pub struct RangeQuery {
     range: Option<String>,
 }
 
-pub async fn storage(
-    State(app): State<Arc<App>>,
-    admin: Admin,
-    Query(q): Query<RangeQuery>,
-) -> WebResult {
-    let ctx = Ctx::new(&app, &admin);
+/// The storage charts live on the overview now; old links and bookmarks land
+/// there, on the same range.
+pub async fn storage(_admin: Admin, Query(q): Query<RangeQuery>) -> WebResult {
     let range = q
         .range
         .filter(|r| RANGES.iter().any(|(k, _)| k == r))
         .unwrap_or_else(|| "7d".into());
-    let devices = app.store.devices()?;
-    let repos = app.store.repositories()?;
-    Ok(page(
-        "Storage",
-        "storage",
-        &ctx,
-        html! {
-            div.spread {
-                h1 { "Storage" }
-                div.ranges {
-                    @for (key, _) in RANGES { a href={ "/storage?range=" (key) } class=[(key == range).then_some("active")] { (key) } }
-                }
-            }
-            (box_card(&app))
-            div.card {
-                h3 { "Storage Box, total used" }
-                div.chart data-src={ "/storage/series?scope=box&range=" (range) } data-scopes="box" {}
-            }
-            div.card {
-                h3 { "Per repository, stacked" }
-                div.chart data-src={ "/storage/series?scope=repos&range=" (range) } data-scopes="repo:*" {}
-            }
-            div.card.table-wrap {
-                h3 { "Latest measurements" }
-                table {
-                    thead { tr { th { "Device" } th.num { "Size" } th.num { "Files" } th { "Measured" } } }
-                    tbody {
-                        @for repo in &repos {
-                            @let name = devices.iter().find(|d| d.id == repo.device_id).map(|d| d.name.clone()).unwrap_or_default();
-                            @let p = app.store.latest_measurement(&format!("repo:{}", repo.id)).ok().flatten();
-                            tr {
-                                td { a href={ "/devices/" (repo.device_id) } { (name) } }
-                                td.num { @if let Some(p) = p { (fmt::bytes(p.bytes)) } @else { "–" } }
-                                td.num { @if let Some(p) = p { (p.files.unwrap_or(0)) } }
-                                td { @if let Some(p) = p { (fmt::ago(p.at)) } @else { span.muted { "not yet" } } }
-                            }
-                        }
-                    }
-                }
-                p.small.muted {
-                    "The box total comes from Hetzner's API; repositories are measured over SFTP through "
-                    (if app.config.storage_box.measure_via == MeasureVia::Twin { "their read-only twins" } else { "the main account" })
-                    ", every " (fmt::duration(app.config.measurement.every_secs as i64)) ". Points are kept every 5 minutes for 7 days, hourly for 90 days, daily forever."
-                }
-            }
-        },
-    )
-    .into_response())
+    Ok(Redirect::to(&format!("/?range={range}#storage")).into_response())
 }
 
 #[derive(Deserialize)]

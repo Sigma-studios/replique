@@ -166,6 +166,23 @@ body.busy::before {
 .chart-legend { display: flex; flex-wrap: wrap; gap: 0.3rem 1rem; font-size: 0.85em; color: var(--text-2); margin-top: 0.3rem; }
 .chart-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 0.35rem; vertical-align: -1px; }
 .ranges { display: flex; gap: 0.3rem; flex-wrap: wrap; }
+/* The overview: the box across the page, then a row per sub-account. */
+.box-card > .card .hero { font-size: 2.6rem; }
+.box-card > .card .gauge { height: 20px; border-radius: 10px; }
+table.accounts td { vertical-align: top; }
+table.accounts td.jobs { min-width: 14rem; }
+table.accounts .job + .job { margin-top: 0.55rem; padding-top: 0.55rem; border-top: 1px solid var(--grid); }
+table.accounts td.num strong { white-space: nowrap; }
+/* At phone width a row becomes a block: device and size side by side, its
+   jobs underneath at full width, rather than four squeezed columns. */
+@media (max-width: 640px) {
+  table.accounts thead { display: none; }
+  table.accounts, table.accounts tbody { display: block; }
+  table.accounts tr { display: grid; grid-template-columns: 1fr auto; gap: 0.2rem 0.8rem; padding: 0.7rem 0; border-bottom: 1px solid var(--border); }
+  table.accounts td { display: block; border: 0; padding: 0; }
+  table.accounts td.hide-narrow { display: none; }
+  table.accounts td.jobs { grid-column: 1 / -1; min-width: 0; margin-top: 0.35rem; }
+}
 .ranges a { padding: 0.15rem 0.6rem; border: 1px solid var(--border); border-radius: 12px; color: var(--text-2); font-size: 0.85em; }
 .ranges a.active { background: var(--accent); color: #fff; border-color: var(--accent); }
 .u-legend { color: var(--text-2); font-size: 0.85em; }

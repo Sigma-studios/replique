@@ -141,7 +141,6 @@ pub fn csrf_field(ctx: &Ctx) -> Markup {
 pub fn page(title: &str, active: &str, ctx: &Ctx, body: Markup) -> Html<String> {
     let nav = [
         ("/", "Aperçu", "overview"),
-        ("/storage", "Storage", "storage"),
         ("/problems", "Problems", "problems"),
         ("/devices/new", "Add device", "add"),
         ("/settings", "Settings", "settings"),
