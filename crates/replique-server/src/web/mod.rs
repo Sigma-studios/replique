@@ -83,31 +83,61 @@ pub fn router() -> Router<Arc<App>> {
         .route("/healthz", get(|| async { "ok" }))
 }
 
+/// The site's static files: name, content, type.
+const ASSETS: &[(&str, &[u8], &str)] = &[
+    (
+        "style.css",
+        include_bytes!("../../assets/style.css"),
+        "text/css",
+    ),
+    (
+        "app.js",
+        include_bytes!("../../assets/app.js"),
+        "text/javascript",
+    ),
+    (
+        "htmx.min.js",
+        include_bytes!("../../assets/vendor/htmx-2.0.4.min.js"),
+        "text/javascript",
+    ),
+    (
+        "uPlot.min.js",
+        include_bytes!("../../assets/vendor/uPlot-1.6.31.iife.min.js"),
+        "text/javascript",
+    ),
+    (
+        "uPlot.min.css",
+        include_bytes!("../../assets/vendor/uPlot-1.6.31.min.css"),
+        "text/css",
+    ),
+];
+
+/// What asset links carry after `?v=`: a hash of the assets themselves. The
+/// crate version never moved between deploys, so browsers kept a week-old
+/// stylesheet (they may cache assets that long) and drew new pages with it.
+fn asset_version() -> &'static str {
+    static V: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
+        let all: Vec<u8> = ASSETS
+            .iter()
+            .flat_map(|(_, body, _)| body.iter().copied())
+            .collect();
+        crate::secrets::sha256_hex(&all)[..12].to_string()
+    });
+    &V
+}
+
 async fn asset(Path(name): Path<String>) -> Response {
-    let (body, kind): (&'static [u8], &str) = match name.as_str() {
-        "style.css" => (include_bytes!("../../assets/style.css"), "text/css"),
-        "app.js" => (include_bytes!("../../assets/app.js"), "text/javascript"),
-        "htmx.min.js" => (
-            include_bytes!("../../assets/vendor/htmx-2.0.4.min.js"),
-            "text/javascript",
-        ),
-        "uPlot.min.js" => (
-            include_bytes!("../../assets/vendor/uPlot-1.6.31.iife.min.js"),
-            "text/javascript",
-        ),
-        "uPlot.min.css" => (
-            include_bytes!("../../assets/vendor/uPlot-1.6.31.min.css"),
-            "text/css",
-        ),
-        _ => return StatusCode::NOT_FOUND.into_response(),
+    let Some((_, body, kind)) = ASSETS.iter().find(|(n, _, _)| *n == name) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
+    let (body, kind): (&'static [u8], &str) = (body, kind);
     (
         [
             (
                 header::CONTENT_TYPE,
                 HeaderValue::from_str(&format!("{kind}; charset=utf-8")).unwrap(),
             ),
-            // URLs carry the version, so a new release is a new URL.
+            // URLs carry a hash of the assets, so changed assets are a new URL.
             (
                 header::CACHE_CONTROL,
                 HeaderValue::from_static("public, max-age=604800"),
@@ -154,11 +184,11 @@ pub fn page(title: &str, active: &str, ctx: &Ctx, body: Markup) -> Html<String> 
                     meta charset="utf-8";
                     meta name="viewport" content="width=device-width, initial-scale=1";
                     title { (title) " · Réplique" }
-                    link rel="stylesheet" href={ "/assets/style.css?v=" (VERSION) };
-                    link rel="stylesheet" href={ "/assets/uPlot.min.css?v=" (VERSION) };
-                    script defer src={ "/assets/htmx.min.js?v=" (VERSION) } {}
-                    script defer src={ "/assets/uPlot.min.js?v=" (VERSION) } {}
-                    script defer src={ "/assets/app.js?v=" (VERSION) } {}
+                    link rel="stylesheet" href={ "/assets/style.css?v=" (asset_version()) };
+                    link rel="stylesheet" href={ "/assets/uPlot.min.css?v=" (asset_version()) };
+                    script defer src={ "/assets/htmx.min.js?v=" (asset_version()) } {}
+                    script defer src={ "/assets/uPlot.min.js?v=" (asset_version()) } {}
+                    script defer src={ "/assets/app.js?v=" (asset_version()) } {}
                 }
                 body data-live="1" hx-headers=(headers) {
                     header.top {
@@ -201,7 +231,7 @@ pub fn bare(title: &str, body: Markup) -> Html<String> {
                     meta charset="utf-8";
                     meta name="viewport" content="width=device-width, initial-scale=1";
                     title { (title) " · Réplique" }
-                    link rel="stylesheet" href={ "/assets/style.css?v=" (VERSION) };
+                    link rel="stylesheet" href={ "/assets/style.css?v=" (asset_version()) };
                 }
                 body {
                     main style="max-width: 460px; margin-top: 8vh;" { (body) }

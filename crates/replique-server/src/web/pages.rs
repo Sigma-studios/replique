@@ -233,13 +233,17 @@ fn box_card(app: &App) -> Markup {
                     @let scale = if measured > used && measured > 0 { used as f64 / measured as f64 } else { 1.0 };
                     @let other = (used - measured).max(0);
                     @let width = |bytes: i64, s: f64| format!("{:.2}", (bytes as f64 * s / quota as f64 * 100.0).min(100.0));
+                    @let free = (quota as i64 - used).max(0);
                     div.row {
-                        span.hero { (fmt::percent(fraction)) }
+                        span.hero title={ "Data " (fmt::bytes(stats.size_data as i64)) " · snapshots " (fmt::bytes(stats.size_snapshots as i64)) } { (fmt::percent(fraction)) }
                         span.muted { (fmt::bytes(used)) " of " (fmt::bytes(quota as i64)) }
                         @if fraction * 100.0 >= alert as f64 { span.status.critical { "Above " (alert) "%" } }
                         @else if fraction * 100.0 >= warn as f64 { span.status.warning { "Above " (warn) "%" } }
                     }
-                    div.gauge.stacked role="meter" aria-valuenow=(format!("{:.0}", fraction * 100.0)) aria-valuemin="0" aria-valuemax="100" aria-label="Storage Box usage" {
+                    // Sizes show on hover only: each device's segment in its
+                    // colour (the same as its swatch in the table below), the
+                    // rest of what is used, and the free track.
+                    div.gauge.stacked role="meter" aria-valuenow=(format!("{:.0}", fraction * 100.0)) aria-valuemin="0" aria-valuemax="100" aria-label="Storage Box usage" title={ "Free: " (fmt::bytes(free)) } {
                         @for (name, slot, bytes) in &parts {
                             span style={ "width: " (width(*bytes, scale)) "%; background: var(--series-" (slot) ")" } title={ (name) ": " (fmt::bytes(*bytes)) } {}
                         }
@@ -247,18 +251,8 @@ fn box_card(app: &App) -> Markup {
                             span.other style={ "width: " (width(other, 1.0)) "%" } title={ "Other: " (fmt::bytes(other)) " (files outside Réplique's repositories, and the box's own snapshots)" } {}
                         }
                     }
-                    div.legend.small {
-                        @for (name, slot, bytes) in &parts {
-                            span { i.swatch style={ "background: var(--series-" (slot) ")" } {} (name) " " span.muted { (fmt::bytes(*bytes)) } }
-                        }
-                        @if other > 0 {
-                            span title="Files outside Réplique's repositories, and the box's own snapshots" { i.swatch.other {} "Other " span.muted { (fmt::bytes(other)) } }
-                        }
-                        span { i.swatch.free {} "Free " span.muted { (fmt::bytes((quota as i64 - used).max(0))) } }
-                    }
                     div.small.muted {
-                        "Data " (fmt::bytes(stats.size_data as i64)) " · snapshots " (fmt::bytes(stats.size_snapshots as i64))
-                        @if let Some(left) = state.subaccounts_remaining() { " · " (left) " sub-accounts left" }
+                        @if let Some(left) = state.subaccounts_remaining() { (left) " sub-accounts left" }
                         @if let Some(at) = state.checked_at { " · checked " (fmt::when(at)) }
                     }
                 }
