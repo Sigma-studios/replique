@@ -17,6 +17,7 @@ pub mod paths {
     pub const RUN_FINISH: &str = "/api/v1/runs/{id}/finish";
     pub const SAFE_TO_DELETE: &str = "/api/v1/devices/{id}/safe-to-delete";
     pub const MIRROR_SOURCES: &str = "/api/v1/mirror-sources";
+    pub const VAULT: &str = "/api/v1/vault/{name}";
 
     /// Job names are restricted to `[a-z0-9_-]` (see `valid_job_name`), so they
     /// never need escaping in a path.
@@ -34,6 +35,11 @@ pub mod paths {
 
     pub fn safe_to_delete(device_id: &str) -> String {
         format!("/api/v1/devices/{device_id}/safe-to-delete")
+    }
+
+    /// `name` follows the job name rules (`valid_job_name`).
+    pub fn vault(name: &str) -> String {
+        format!("/api/v1/vault/{name}")
     }
 }
 
@@ -60,6 +66,10 @@ pub fn is_well_formed_token(token: &str) -> bool {
 /// Devices send progress at most this often. The server may drop progress that
 /// arrives faster rather than store it.
 pub const PROGRESS_MIN_INTERVAL_SECS: u64 = 10;
+
+/// The largest file a device may send to `PUT /vault/{name}`. A Bitwarden
+/// vault cache is a few megabytes; this leaves room for a big vault.
+pub const MAX_VAULT_BYTES: usize = 64 * 1024 * 1024;
 
 /// A finish report carries at most this many errors; `error_count` says how many
 /// there were in total.

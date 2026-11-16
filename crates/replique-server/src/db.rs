@@ -161,6 +161,31 @@ CREATE TABLE host_keys (
 ALTER TABLE runs ADD COLUMN peak_bps INTEGER;
 ALTER TABLE runs ADD COLUMN sent_bytes INTEGER;
 "#,
+    r#"
+-- Copies of files a device sends as they are because they are encrypted
+-- already (the Bitwarden desktop app's vault cache). `confirmed_at` moves when
+-- the same content is sent again: the device is alive and the copy current.
+CREATE TABLE vault_copies (
+    id TEXT PRIMARY KEY,
+    device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    sha256 TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    received_at INTEGER NOT NULL,
+    confirmed_at INTEGER NOT NULL,
+    on_box INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX vault_copies_by_file ON vault_copies (device_id, name, received_at);
+-- The paper kit's checklist: what is written down, never the values.
+CREATE TABLE recovery_entries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    hint TEXT NOT NULL DEFAULT '',
+    written_at INTEGER,
+    position INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+);
+"#,
 ];
 
 pub fn now() -> i64 {
@@ -353,6 +378,47 @@ pub struct Run {
     pub peak_bps: Option<i64>,
     /// Bytes it sent over the network (or copied, for a mirror), as reported.
     pub sent_bytes: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct VaultCopy {
+    pub id: String,
+    pub device_id: String,
+    /// What the device calls the file (`bitwarden`).
+    pub name: String,
+    pub sha256: String,
+    pub size: i64,
+    pub received_at: i64,
+    /// When the device last sent this same content.
+    pub confirmed_at: i64,
+    /// Whether it is on the Storage Box too.
+    pub on_box: bool,
+}
+
+const VAULT_COLUMNS: &str = "id, device_id, name, sha256, size, received_at, confirmed_at, on_box";
+
+fn vault_row(r: &Row) -> rusqlite::Result<VaultCopy> {
+    Ok(VaultCopy {
+        id: r.get(0)?,
+        device_id: r.get(1)?,
+        name: r.get(2)?,
+        sha256: r.get(3)?,
+        size: r.get(4)?,
+        received_at: r.get(5)?,
+        confirmed_at: r.get(6)?,
+        on_box: r.get(7)?,
+    })
+}
+
+#[derive(Debug, Clone)]
+pub struct RecoveryEntry {
+    pub id: i64,
+    pub name: String,
+    /// Where to find it, how many codes: written on the printed form.
+    pub hint: String,
+    /// When it was last written down on paper.
+    pub written_at: Option<i64>,
+    pub position: i64,
 }
 
 const RUN_COLUMNS: &str = "id, device_id, job_id, client_run_id, kind, status, started_at, \
@@ -1313,6 +1379,138 @@ impl Store {
             .collect::<Result<_, _>>()?;
         conn.execute("DELETE FROM sessions WHERE expires_at <= ?1", [now()])?;
         Ok(gone)
+    }
+
+    // ------------------------------------------------------------ vault copies
+
+    pub fn insert_vault_copy(&self, c: &VaultCopy) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute(
+            "INSERT INTO vault_copies (id, device_id, name, sha256, size, received_at, confirmed_at, on_box) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![c.id, c.device_id, c.name, c.sha256, c.size, c.received_at, c.confirmed_at, c.on_box],
+        )?;
+        Ok(())
+    }
+
+    /// One file's copies, newest first.
+    pub fn vault_copies(&self, device_id: &str, name: &str) -> anyhow::Result<Vec<VaultCopy>> {
+        let conn = self.0.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {VAULT_COLUMNS} FROM vault_copies WHERE device_id = ?1 AND name = ?2 ORDER BY received_at DESC, id DESC"
+        ))?;
+        let rows = stmt.query_map(params![device_id, name], vault_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    /// The newest copy of every file of every device.
+    pub fn latest_vault_copies(&self) -> anyhow::Result<Vec<VaultCopy>> {
+        let conn = self.0.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {VAULT_COLUMNS} FROM vault_copies v WHERE received_at = \
+               (SELECT MAX(received_at) FROM vault_copies w WHERE w.device_id = v.device_id AND w.name = v.name) \
+             ORDER BY device_id, name"
+        ))?;
+        let rows = stmt.query_map([], vault_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn vault_copy(&self, id: &str) -> anyhow::Result<Option<VaultCopy>> {
+        let conn = self.0.lock();
+        Ok(conn
+            .query_row(
+                &format!("SELECT {VAULT_COLUMNS} FROM vault_copies WHERE id = ?1"),
+                [id],
+                vault_row,
+            )
+            .optional()?)
+    }
+
+    pub fn vault_copies_off_box(&self) -> anyhow::Result<Vec<VaultCopy>> {
+        let conn = self.0.lock();
+        let mut stmt = conn.prepare(&format!(
+            "SELECT {VAULT_COLUMNS} FROM vault_copies WHERE on_box = 0 ORDER BY received_at"
+        ))?;
+        let rows = stmt.query_map([], vault_row)?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn confirm_vault_copy(&self, id: &str, at: i64) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute(
+            "UPDATE vault_copies SET confirmed_at = ?2 WHERE id = ?1",
+            params![id, at],
+        )?;
+        Ok(())
+    }
+
+    pub fn set_vault_copy_on_box(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute("UPDATE vault_copies SET on_box = 1 WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn delete_vault_copy(&self, id: &str) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute("DELETE FROM vault_copies WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    // ------------------------------------------------------------ recovery kit
+
+    pub fn recovery_entries(&self) -> anyhow::Result<Vec<RecoveryEntry>> {
+        let conn = self.0.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, name, hint, written_at, position FROM recovery_entries ORDER BY position, id",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(RecoveryEntry {
+                id: r.get(0)?,
+                name: r.get(1)?,
+                hint: r.get(2)?,
+                written_at: r.get(3)?,
+                position: r.get(4)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
+    pub fn add_recovery_entry(&self, name: &str, hint: &str) -> anyhow::Result<i64> {
+        let conn = self.0.lock();
+        let position: i64 = conn.query_row(
+            "SELECT COALESCE(MAX(position), 0) + 1 FROM recovery_entries",
+            [],
+            |r| r.get(0),
+        )?;
+        conn.execute(
+            "INSERT INTO recovery_entries (name, hint, position, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![name, hint, position, now()],
+        )?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_recovery_entry(&self, id: i64, name: &str, hint: &str) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute(
+            "UPDATE recovery_entries SET name = ?2, hint = ?3 WHERE id = ?1",
+            params![id, name, hint],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_recovery_entry(&self, id: i64) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute("DELETE FROM recovery_entries WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    pub fn set_recovery_written(&self, id: i64, at: Option<i64>) -> anyhow::Result<()> {
+        let conn = self.0.lock();
+        conn.execute(
+            "UPDATE recovery_entries SET written_at = ?2 WHERE id = ?1",
+            params![id, at],
+        )?;
+        Ok(())
     }
 
     // ------------------------------------------------------------ settings

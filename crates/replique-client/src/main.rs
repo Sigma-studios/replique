@@ -67,6 +67,9 @@ enum Cmd {
     },
     /// Write a job's exclude file (configured and generated) and print it.
     Excludes { job: String },
+    /// Send a file that is encrypted already, as it is, to Réplique (the
+    /// Bitwarden desktop app's vault: `vault-copy bitwarden <its data.json>`).
+    VaultCopy { name: String, file: PathBuf },
 }
 
 fn main() -> ExitCode {
@@ -119,6 +122,9 @@ fn real_main(cli: Cli) -> Result<i32, Error> {
             Ok(0)
         }
         Cmd::Run { job } => run::run(&config, &state, &job, &Stop::install()),
+        Cmd::VaultCopy { name, file } => {
+            replique_client::vault_copy::run(&config, &state, &name, &file)
+        }
         Cmd::Mirror { job } => {
             if config.job(&job)?.kind != JobKind::Mirror {
                 return Err(Error::msg(format!("{job} is not a mirror job; use `run`")));

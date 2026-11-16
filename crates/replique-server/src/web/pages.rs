@@ -732,6 +732,33 @@ fn source_broken_note(app: &App, job: &Job) -> Markup {
     }
 }
 
+/// On a NixOS device's page: its Bitwarden copy, or the lines that turn it
+/// on. The device's config decides what it sends; this only suggests.
+fn bitwarden_card(app: &App, device: &Device) -> Markup {
+    let latest = app
+        .store
+        .vault_copies(&device.id, "bitwarden")
+        .ok()
+        .and_then(|c| c.into_iter().next());
+    let snippet = "services.replique.bitwardenCopy = {\n  enable = true;\n  user = \"sigma\"; # whose Bitwarden desktop app\n};";
+    html! {
+        h2 { "Bitwarden copy" }
+        div.card {
+            @match latest {
+                Some(c) => {
+                    p { "Last copy " (fmt::when(c.received_at))
+                        @if c.confirmed_at > c.received_at { ", unchanged since, checked " (fmt::when(c.confirmed_at)) }
+                        " · " a href="/recovery" { "Recovery" } }
+                }
+                None => {
+                    p.small.muted { "This device can send the Bitwarden desktop app's vault, encrypted with your master password, to Réplique each time the app syncs: a copy reachable without any password kept in Bitwarden. Add to its NixOS config, then rebuild:" }
+                    div.copy { pre.mono style="margin: 0" { (snippet) } button type="button" data-copy=(snippet) { "Copy" } }
+                }
+            }
+        }
+    }
+}
+
 fn rules_view(job: &Job) -> Markup {
     let r = &job.rules;
     html! {
@@ -965,6 +992,9 @@ pub async fn device(
                 }
             }
             (live)
+            @if device.kind == DeviceKind::Nixos && device.paired_at.is_some() {
+                (bitwarden_card(&app, &device))
+            }
             @if device.kind != DeviceKind::Android && device.paired_at.is_some() {
                 h2 { "Mirrors" }
                 div.card {

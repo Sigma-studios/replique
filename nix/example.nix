@@ -99,4 +99,11 @@
       ioIdle = true;
     };
   };
+
+  # The Bitwarden desktop app's vault, encrypted with the master password, sent
+  # to Réplique whenever it changes.
+  services.replique.bitwardenCopy = {
+    enable = true;
+    user = "sigma";
+  };
 }

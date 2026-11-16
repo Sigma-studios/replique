@@ -17,6 +17,7 @@ self:
 }:
 let
   cfg = config.services.replique.client;
+  bw = config.services.replique.bitwardenCopy;
   jobs = config.services.replique.jobs;
   inherit (lib)
     literalExpression
@@ -325,6 +326,21 @@ let
 in
 {
   options.services.replique = {
+    bitwardenCopy = {
+      enable = mkEnableOption "sending the Bitwarden desktop app's vault, encrypted with the master password, to Réplique whenever it changes";
+      user = mkOption {
+        type = types.str;
+        example = "sigma";
+        description = "Whose Bitwarden desktop app (the copy runs as this user).";
+      };
+      file = mkOption {
+        type = types.str;
+        default = "/home/${bw.user}/.config/Bitwarden/data.json";
+        defaultText = literalExpression ''"/home/''${user}/.config/Bitwarden/data.json"'';
+        description = "The desktop app's vault cache. The Flatpak keeps it in `~/.var/app/com.bitwarden.desktop/config/Bitwarden/data.json`.";
+      };
+    };
+
     client = {
       enable = mkEnableOption "the Réplique client and its backup jobs";
 
@@ -390,6 +406,46 @@ in
   };
 
   config = lib.mkMerge [
+    (mkIf (cfg.enable && bw.enable) {
+      # Sends the desktop app's vault cache, encrypted with the master password,
+      # each time the app writes it (a sync), and once a day so Réplique knows
+      # the copy is still current. A copy outside restic is reachable without
+      # any password kept in Bitwarden. The file is named here, in this
+      # config: the server never chooses what a device sends.
+      systemd.services.replique-bitwarden-copy = {
+        description = "Réplique: copy of the Bitwarden vault";
+        serviceConfig = {
+          Type = "oneshot";
+          User = bw.user;
+          SupplementaryGroups = [ "replique-client" ];
+          ExecStart = utils.escapeSystemdExecArgs [
+            exe
+            "vault-copy"
+            "bitwarden"
+            bw.file
+          ];
+          # 75: the server is away; the next change or day sends it again.
+          SuccessExitStatus = [ 75 ];
+        };
+      };
+      systemd.paths.replique-bitwarden-copy = {
+        description = "Réplique: watch the Bitwarden vault";
+        wantedBy = [ "paths.target" ];
+        pathConfig = {
+          PathChanged = bw.file;
+          Unit = "replique-bitwarden-copy.service";
+        };
+      };
+      systemd.timers.replique-bitwarden-copy = {
+        description = "Réplique: daily copy of the Bitwarden vault";
+        wantedBy = [ "timers.target" ];
+        timerConfig = {
+          OnCalendar = "daily";
+          Persistent = true;
+          RandomizedDelaySec = "1h";
+        };
+      };
+    })
     {
       warnings = lib.optional (
         jobs != { } && !cfg.enable

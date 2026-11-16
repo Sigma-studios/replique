@@ -333,6 +333,21 @@ Replies with the newest snapshot that is both
 files (it has the password) and offers those unchanged since `snapshot_time`;
 deleting stays the user's action.
 
+## Copies of encrypted files
+
+### `PUT /api/v1/vault/{name}`
+
+A file the device sends as it is, because it is encrypted already: the Bitwarden
+desktop app's vault cache (`name` = `bitwarden`), encrypted with the master
+password. Body: the file's bytes (`application/octet-stream`, at most 64 MB).
+Reply: `{"ok": true}`.
+
+The server keeps the last 10 copies per device and name, and puts them on the
+Storage Box in its own area. Sending the same content again only confirms the
+newest copy (the device is alive and the copy current); a week without either
+raises a warning. Which file is sent is the device's choice, set in its own
+configuration; the server never asks for a file.
+
 ## Storage layout on the Box
 
 * Each device's repository has its own sub-account, home

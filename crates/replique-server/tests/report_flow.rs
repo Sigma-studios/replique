@@ -1403,3 +1403,194 @@ async fn source_breakage_unchecked_escalates() {
     let (_, overview) = browser.get("/fragments/overview").await;
     assert!(!overview.contains(">Error<"), "{overview}");
 }
+
+/// The Bitwarden copy (a file sent as it is, encrypted already) and the
+/// recovery kit: plan, checklist, reminders, print view, Storage Box copies.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn vault_copies_and_the_recovery_kit() {
+    let server = start("").await;
+    let browser = Browser::login(&server.url).await;
+    let (_, location) = browser
+        .post("/devices", &[("name", "PC"), ("kind", "nixos")])
+        .await;
+    let pc_id = location.trim_start_matches("/devices/").to_string();
+    let code = pairing_code(&browser, &pc_id).await;
+    let (pc, _) = Device::pair(&server.url, &code, DeviceKind::Nixos)
+        .await
+        .unwrap();
+    let (_, page) = browser.get(&format!("/devices/{pc_id}")).await;
+    assert!(
+        page.contains("services.replique.bitwardenCopy"),
+        "the lines to add"
+    );
+
+    let put = |name: &str, body: Vec<u8>, token: Option<&str>| {
+        let url = format!("{}{}", server.url, paths::vault(name));
+        let token = token.map(str::to_string);
+        async move {
+            let mut r = reqwest::Client::new().put(url).body(body);
+            if let Some(t) = token {
+                r = r.bearer_auth(t);
+            }
+            r.send().await.unwrap().status()
+        }
+    };
+    assert_eq!(
+        put("bitwarden", b"sealed-1".to_vec(), Some(&pc.token)).await,
+        StatusCode::OK
+    );
+    // The same content again only confirms the copy.
+    assert_eq!(
+        put("bitwarden", b"sealed-1".to_vec(), Some(&pc.token)).await,
+        StatusCode::OK
+    );
+    let copies = server.app.store.vault_copies(&pc.id, "bitwarden").unwrap();
+    assert_eq!(copies.len(), 1);
+    assert!(copies[0].confirmed_at >= copies[0].received_at);
+    // Refused: no token, a bad name, nothing.
+    assert_eq!(
+        put("bitwarden", b"x".to_vec(), None).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(
+        !put("Bad/Name", b"x".to_vec(), Some(&pc.token))
+            .await
+            .is_success()
+    );
+    assert_eq!(
+        put("bitwarden", vec![], Some(&pc.token)).await,
+        StatusCode::BAD_REQUEST
+    );
+    // Ten kept.
+    for i in 2..=12 {
+        let body = format!("sealed-{i}").into_bytes();
+        assert_eq!(
+            put("bitwarden", body, Some(&pc.token)).await,
+            StatusCode::OK
+        );
+    }
+    let copies = server.app.store.vault_copies(&pc.id, "bitwarden").unwrap();
+    assert_eq!(copies.len(), replique_server::vault::KEEP);
+    // Downloaded as it was sent.
+    let r = browser
+        .http
+        .get(format!("{}/vault/{}", server.url, copies[0].id))
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        r.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .contains("bitwarden-pc-")
+    );
+    assert_eq!(r.bytes().await.unwrap().as_ref(), b"sealed-12");
+    // And on the box, in Réplique's own area.
+    replique_server::vault::sync_box(&server.app).await;
+    let area = server.local_root().join("replique/_replique");
+    let on_box = std::fs::read_dir(area.join("vault/pc/bitwarden"))
+        .unwrap()
+        .count();
+    assert_eq!(on_box, replique_server::vault::KEEP);
+    let (_, page) = browser.get(&format!("/devices/{pc_id}")).await;
+    assert!(page.contains("Last copy"));
+
+    // A week without a copy: a warning.
+    server
+        .app
+        .store
+        .confirm_vault_copy(&copies[0].id, replique_server::db::now() - 8 * 86_400)
+        .unwrap();
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    let titles = || {
+        server
+            .app
+            .store
+            .open_alerts()
+            .unwrap()
+            .into_iter()
+            .map(|a| a.title)
+            .collect::<Vec<_>>()
+    };
+    assert!(
+        titles()
+            .iter()
+            .any(|t| t.contains("no bitwarden copy for a week")),
+        "{:?}",
+        titles()
+    );
+    assert_eq!(
+        put("bitwarden", b"sealed-12".to_vec(), Some(&pc.token)).await,
+        StatusCode::OK
+    );
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    assert!(
+        !titles().iter().any(|t| t.contains("copy for a week")),
+        "{:?}",
+        titles()
+    );
+
+    // ---- the recovery kit: a draft plan and checklist to start with
+    let (_, page) = browser.get("/recovery").await;
+    assert!(page.contains("Kit checklist") && page.contains("Hetzner: 2FA recovery codes"));
+    assert!(page.contains("Not yet"));
+    assert!(
+        titles().iter().any(|t| t == "Recovery kit: to do"),
+        "{:?}",
+        titles()
+    );
+    // Written down, printed: nothing left to do.
+    for e in server.app.store.recovery_entries().unwrap() {
+        browser
+            .post(&format!("/recovery/entries/{}/written", e.id), &[])
+            .await;
+    }
+    browser.post("/recovery/printed", &[]).await;
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    assert!(
+        !titles().iter().any(|t| t == "Recovery kit: to do"),
+        "{:?}",
+        titles()
+    );
+    // A changed plan makes the envelopes out of date.
+    let (status, _) = browser
+        .post(
+            "/recovery/plan",
+            &[(
+                "plan",
+                "# Recovery plan\n\nEnvelope 2 is with Alex.\n<b>x</b>",
+            )],
+        )
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    replique_server::alerts::evaluate(&server.app)
+        .await
+        .unwrap();
+    let alert = server
+        .app
+        .store
+        .open_alert("recovery_pending")
+        .unwrap()
+        .expect("a reminder");
+    assert!(alert.detail.contains("print it again"), "{}", alert.detail);
+    // The print view: the plan, then the entries to fill in by hand, each page
+    // saying its version; raw HTML stays text.
+    let version = replique_server::recovery::version(&server.app);
+    let (_, print) = browser.get("/recovery/print").await;
+    assert!(print.contains(&format!("version {version}")));
+    assert!(print.contains("Envelope 2 is with Alex"));
+    assert!(print.contains("&lt;b&gt;x&lt;/b&gt;"));
+    assert!(print.contains("GitHub: recovery codes"));
+    // The plan and the checklist on the box, without any value.
+    replique_server::recovery::sync_box(&server.app).await;
+    let plan = std::fs::read_to_string(area.join("recovery/plan.md")).unwrap();
+    assert!(plan.contains("Envelope 2 is with Alex"));
+    let kit = std::fs::read_to_string(area.join("recovery/kit.md")).unwrap();
+    assert!(kit.contains("Aegis password") && kit.contains("written:"));
+}

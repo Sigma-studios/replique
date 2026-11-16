@@ -334,6 +334,32 @@ pub fn merge_keys(existing: &str, keys: &[String]) -> String {
     format!("{}\n", lines.join("\n"))
 }
 
+/// Writes `bytes` to `path` (relative to the login's home), creating its
+/// folders, replacing a file already there.
+pub async fn write_file(sftp: &SftpSession, path: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let mut dir = String::new();
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+    for part in &parts[..parts.len().saturating_sub(1)] {
+        dir = if dir.is_empty() {
+            part.to_string()
+        } else {
+            format!("{dir}/{part}")
+        };
+        if !sftp.try_exists(&dir).await.unwrap_or(false) {
+            sftp.create_dir(&dir)
+                .await
+                .map_err(|e| anyhow!("creating {dir}: {e}"))?;
+        }
+    }
+    let mut file = sftp
+        .create(path)
+        .await
+        .map_err(|e| anyhow!("writing {path}: {e}"))?;
+    file.write_all(bytes).await?;
+    file.shutdown().await?;
+    Ok(())
+}
+
 /// Total bytes and file count under `root`, following no symlinks.
 pub async fn walk(sftp: &SftpSession, root: &str) -> anyhow::Result<(u64, u64)> {
     let mut bytes = 0u64;

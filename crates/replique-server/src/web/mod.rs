@@ -4,6 +4,7 @@
 
 pub mod fmt;
 pub mod pages;
+pub mod recovery;
 pub mod restore;
 
 use std::sync::Arc;
@@ -76,6 +77,22 @@ pub fn router() -> Router<Arc<App>> {
         .route("/repos/{id}/browse", get(restore::browse))
         .route("/repos/{id}/download", get(restore::download))
         .route("/runbook", get(pages::runbook))
+        .route("/recovery", get(recovery::page_view))
+        .route("/recovery/print", get(recovery::print_view))
+        .route("/recovery/plan", post(recovery::save_plan))
+        .route("/recovery/entries", post(recovery::add_entry))
+        .route("/recovery/entries/{id}", post(recovery::update_entry))
+        .route(
+            "/recovery/entries/{id}/delete",
+            post(recovery::delete_entry),
+        )
+        .route(
+            "/recovery/entries/{id}/written",
+            post(recovery::entry_written),
+        )
+        .route("/recovery/printed", post(recovery::printed))
+        .route("/recovery/reviewed", post(recovery::reviewed))
+        .route("/vault/{id}", get(recovery::download_copy))
         .route("/login", get(auth::login_form).post(auth::login))
         .route("/logout", post(auth::logout))
         .route("/events", get(crate::events::stream))
@@ -173,6 +190,7 @@ pub fn page(title: &str, active: &str, ctx: &Ctx, body: Markup) -> Html<String> 
         ("/", "Aperçu", "overview"),
         ("/problems", "Problems", "problems"),
         ("/devices/new", "Add device", "add"),
+        ("/recovery", "Recovery", "recovery"),
         ("/settings", "Settings", "settings"),
     ];
     let headers = format!("{{\"X-CSRF-Token\": \"{}\"}}", ctx.csrf);

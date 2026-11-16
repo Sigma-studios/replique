@@ -38,6 +38,8 @@ pub struct Recorded {
     pub by_client_id: HashMap<String, String>,
     pub start_calls: usize,
     pub mirror_sources: Vec<MirrorSource>,
+    /// Files received on `PUT /vault/{name}`.
+    pub vault: Vec<(String, Vec<u8>)>,
 }
 
 impl Recorded {
@@ -62,6 +64,7 @@ impl Mock {
         let app = Router::new()
             .route(paths::PAIR, post(pair))
             .route(paths::JOB, put(put_job))
+            .route(paths::VAULT, put(put_vault))
             .route(paths::RUNS, post(start_run))
             .route(paths::RUN_PROGRESS, post(progress))
             .route(paths::RUN_FINISH, post(finish))
@@ -145,6 +148,20 @@ async fn pair(State(rec): Shared, headers: HeaderMap, Json(req): Json<PairReques
         storage,
     })
     .into_response()
+}
+
+async fn put_vault(
+    State(rec): Shared,
+    headers: HeaderMap,
+    UrlPath(name): UrlPath<String>,
+    body: axum::body::Bytes,
+) -> Response {
+    let mut rec = rec.lock().unwrap();
+    if let Some(r) = gate(&rec, &headers, true) {
+        return r;
+    }
+    rec.vault.push((name, body.to_vec()));
+    Json(Ack::OK).into_response()
 }
 
 async fn put_job(

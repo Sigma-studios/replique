@@ -137,6 +137,22 @@ impl Api {
             .map(drop)
     }
 
+    /// Sends a file as it is (`PUT /vault/{name}`): one encrypted already.
+    pub fn put_vault(&self, name: &str, bytes: &[u8]) -> Result<(), ApiError> {
+        let req = self
+            .agent
+            .put(self.url(&paths::vault(name)))
+            .header("Content-Type", "application/octet-stream");
+        let req = match self.auth() {
+            Some(a) => req.header("Authorization", a),
+            None => req,
+        };
+        let resp = req
+            .send(bytes)
+            .map_err(|e| ApiError::Unreachable(e.to_string()))?;
+        read::<serde_json::Value>(resp).map(drop)
+    }
+
     pub fn mirror_sources(&self) -> Result<MirrorSources, ApiError> {
         self.get(paths::MIRROR_SOURCES)
     }

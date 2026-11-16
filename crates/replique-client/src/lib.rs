@@ -17,6 +17,7 @@ pub mod signals;
 pub mod spool;
 pub mod state;
 pub mod status;
+pub mod vault_copy;
 
 use std::fmt;
 

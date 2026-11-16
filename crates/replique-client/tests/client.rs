@@ -483,3 +483,35 @@ fn excludes_cover_build_output_and_escape_paths() {
         "{excludes}"
     );
 }
+
+#[test]
+fn vault_copy_sends_the_file_as_it_is() {
+    let mock = Mock::start();
+    let c = Client::new();
+    c.pair(&mock);
+    c.write_config(json!({ "server": mock.url, "jobs": {} }));
+    let file = c.root().join("data.json");
+    fs::write(&file, b"{\"encrypted\":\"2.abc|def|ghi\"}").unwrap();
+    let out = c.run(&["vault-copy", "bitwarden", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    mock.with(|r| {
+        assert_eq!(r.vault.len(), 1);
+        assert_eq!(r.vault[0].0, "bitwarden");
+        assert_eq!(r.vault[0].1, fs::read(&file).unwrap());
+    });
+    // The server away: a temporary failure (75), the next change sends it.
+    mock.with(|r| r.down = true);
+    assert_eq!(
+        c.run(&["vault-copy", "bitwarden", file.to_str().unwrap()])
+            .status
+            .code(),
+        Some(75)
+    );
+    // A missing file is an error.
+    assert_eq!(
+        c.run(&["vault-copy", "bitwarden", "/nonexistent/data.json"])
+            .status
+            .code(),
+        Some(1)
+    );
+}

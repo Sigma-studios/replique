@@ -684,6 +684,12 @@ pub async fn evaluate(app: &Arc<App>) -> anyhow::Result<()> {
             }
         }
     }
+    // Copies of encrypted files (Bitwarden), and the recovery kit.
+    crate::vault::check_stale(app).await?;
+    crate::vault::sync_box(app).await;
+    crate::recovery::seed(app)?;
+    crate::recovery::remind(app).await;
+    crate::recovery::sync_box(app).await;
     Ok(())
 }
 

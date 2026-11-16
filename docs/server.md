@@ -197,6 +197,30 @@ These environment variables override the file (a missing file is then fine):
 | `REPLIQUE_KEY_INSTALL` | `storage_box.key_install` |
 | `REPLIQUE_LOG` | log filter, e.g. `info` or `debug,russh=warn` (logs go to stderr) |
 
+## Recovery
+
+The Recovery page holds what you need when something is lost, and no secret:
+
+* **The paper kit's checklist**: the names of what is handwritten in the kit
+  envelopes (Bitwarden's recovery code, the Aegis password, recovery codes of the
+  critical accounts…), each with where to find it and when it was written down.
+* **The recovery plan**: markdown, pre-filled with a first draft, saying where
+  every secret lives and what to do in each disaster.
+* **Print the kit**: one print of the plan and a form with room to write each
+  entry by hand, every page showing the plan's version. Print it from the
+  browser (two copies, one per envelope), never as a PDF.
+* **Copies of the Bitwarden vault** sent by devices with
+  `services.replique.bitwardenCopy` (the last 10, downloadable).
+
+Until every entry is written down and the current version printed, it is a
+Problem with a Discord reminder each week; then again once a year (check both
+envelopes and their seals) and whenever the plan or the checklist changes.
+
+Réplique writes the vault copies, the plan and the checklist to the Storage Box
+too, in its own folder `replique/_replique` (a writable sub-account it creates
+the first time; every other login it holds is read-only), so they can be read
+with Hetzner access alone.
+
 ## What the website shows
 
 * **Overview:** the Storage Box, split by device; then a row per sub-account

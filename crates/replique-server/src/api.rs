@@ -108,6 +108,33 @@ pub fn router() -> Router<Arc<App>> {
         .route(paths::RUN_FINISH, post(finish))
         .route(paths::SAFE_TO_DELETE, get(safe_to_delete))
         .route(paths::MIRROR_SOURCES, get(mirror_sources))
+        .route(
+            paths::VAULT,
+            put(put_vault).layer(axum::extract::DefaultBodyLimit::max(
+                replique_proto::MAX_VAULT_BYTES,
+            )),
+        )
+}
+
+/// `PUT /api/v1/vault/{name}`: a file the device sends as it is, encrypted
+/// already (see `vault`). Which file is the device's choice, never the
+/// server's.
+async fn put_vault(
+    State(app): State<Arc<App>>,
+    DeviceAuth(device): DeviceAuth,
+    Path(name): Path<String>,
+    body: Bytes,
+) -> Result<Json<Ack>, ApiErr> {
+    if !replique_proto::valid_job_name(&name) {
+        return Err(ApiErr::bad_request("Invalid name."));
+    }
+    if body.is_empty() {
+        return Err(ApiErr::bad_request("Empty file."));
+    }
+    crate::vault::receive(&app, &device, &name, &body)
+        .await
+        .map_err(ApiErr::internal)?;
+    Ok(Json(Ack::OK))
 }
 
 async fn pair(

@@ -16,11 +16,13 @@ pub mod hetzner;
 pub mod measure;
 pub mod mirrors;
 pub mod provision;
+pub mod recovery;
 pub mod restore;
 pub mod secrets;
 pub mod ssh;
 pub mod storage;
 pub mod transfer;
+pub mod vault;
 pub mod web;
 
 use std::collections::HashMap;

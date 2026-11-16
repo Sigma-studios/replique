@@ -242,6 +242,16 @@ The copy is a normal restic repository:
 `replique-phone snapshots` (or `restic -r <mirrorPath> --no-lock …`) with the
 phone's password.
 
+### Bitwarden copy
+
+`replique-client vault-copy bitwarden <file>` sends the Bitwarden desktop app's
+vault cache (`~/.config/Bitwarden/data.json`), encrypted with the master
+password, to Réplique as it is (`PUT /api/v1/vault/bitwarden`). A copy outside
+restic can be opened without any password kept in Bitwarden. It exits 75 when the
+server is away (the next change or day sends it again). With
+`services.replique.bitwardenCopy`, the module runs it whenever the file changes
+(a systemd path unit) and once a day.
+
 ## Module reference
 
 ### `services.replique.client`
@@ -285,6 +295,14 @@ Names are 1 to 64 of `a-z`, `0-9`, `-`, `_`.
 | `mirrorRemovedPath` | `null` | Mirror: where removed files go (`<mirrorPath>.removed`). |
 | `keepRemovedDays` | `30` | Mirror: how long removed files are kept. |
 | `mirrorFrom` | `null` | Mirror: an rclone path to copy from instead of the listed login. |
+
+### `services.replique.bitwardenCopy`
+
+| Option | Default | Meaning |
+| --- | --- | --- |
+| `enable` | `false` | Send the Bitwarden desktop app's vault to Réplique whenever it changes, and daily |
+| `user` | | Whose Bitwarden app; the copy runs as this user |
+| `file` | `/home/<user>/.config/Bitwarden/data.json` | The vault cache (the Flatpak keeps it in `~/.var/app/com.bitwarden.desktop/config/Bitwarden/data.json`) |
 
 ### What it generates
 
