@@ -30,6 +30,62 @@ pub struct DeviceConfig {
     /// The phone always uses `never-prune`; the field is here so the website and
     /// the app agree on it explicitly.
     pub retention: Retention,
+    /// Files whose age the app reports after each backup (`FinishRun::watched`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watched: Vec<WatchedFiles>,
+}
+
+/// Files another app writes now and then, whose newest copy should not get
+/// old: Aegis's automatic backups. The app only reports how many there are
+/// and when the newest was written, never names or contents.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchedFiles {
+    /// What they are, for the website and the alerts: `Aegis backups`.
+    pub name: String,
+    /// The folder they are written to (not searched below it).
+    pub folder: String,
+    /// File names to count: `*` matches any run of characters, `?` one.
+    pub pattern: String,
+    /// The newest older than this raises a warning.
+    pub max_age_days: u32,
+}
+
+impl WatchedFiles {
+    /// Aegis's automatic backups: `aegis-backup-yyyyMMdd-HHmmss.json`, or
+    /// `aegis-backup.json` when Aegis keeps a single file. Aegis writes one
+    /// when its vault changes, not on a schedule.
+    pub fn aegis() -> WatchedFiles {
+        WatchedFiles {
+            name: "Aegis backups".into(),
+            folder: format!("{ANDROID_SHARED_STORAGE}/Aegis"),
+            pattern: "aegis-backup*.json".into(),
+            max_age_days: 30,
+        }
+    }
+}
+
+/// Whether a file name matches a `WatchedFiles` pattern (`*` and `?`).
+pub fn name_matches(pattern: &str, name: &str) -> bool {
+    let (p, n): (Vec<char>, Vec<char>) = (pattern.chars().collect(), name.chars().collect());
+    // Greedy matching with backtracking to the last `*`.
+    let (mut i, mut j) = (0, 0);
+    let mut star: Option<(usize, usize)> = None;
+    while j < n.len() {
+        if i < p.len() && (p[i] == '?' || p[i] == n[j]) {
+            i += 1;
+            j += 1;
+        } else if i < p.len() && p[i] == '*' {
+            star = Some((i, j));
+            i += 1;
+        } else if let Some((si, sj)) = star {
+            i = si + 1;
+            j = sj + 1;
+            star = Some((si, sj + 1));
+        } else {
+            return false;
+        }
+    }
+    p[i..].iter().all(|c| *c == '*')
 }
 
 /// One folder and its filters.
@@ -114,6 +170,7 @@ impl DeviceConfig {
             interval_hours: 24,
             daily_at: None,
             retention: Retention::NeverPrune,
+            watched: Vec::new(),
         }
     }
 }
@@ -139,5 +196,17 @@ mod tests {
         assert_eq!(parse_daily_at("24:00"), None);
         assert_eq!(parse_daily_at("2:00"), None);
         assert_eq!(parse_daily_at("02h00"), None);
+    }
+
+    #[test]
+    fn patterns() {
+        let p = &WatchedFiles::aegis().pattern;
+        assert!(name_matches(p, "aegis-backup-20261116-143000.json"));
+        assert!(name_matches(p, "aegis-backup.json"));
+        assert!(!name_matches(p, "aegis-backup-20261116-143000.json.tmp"));
+        assert!(!name_matches(p, "aegis-export.json"));
+        assert!(name_matches("a?c*", "abc"));
+        assert!(name_matches("*b*b", "abab"));
+        assert!(!name_matches("a?c", "ac"));
     }
 }

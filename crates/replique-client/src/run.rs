@@ -44,6 +44,7 @@ pub fn failed(outcome: &Outcome) -> FinishRun {
         } else {
             outcome.message.clone()
         },
+        watched: vec![],
     }
 }
 

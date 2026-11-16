@@ -23,6 +23,7 @@ pub mod ssh;
 pub mod storage;
 pub mod transfer;
 pub mod vault;
+pub mod watched;
 pub mod web;
 
 use std::collections::HashMap;

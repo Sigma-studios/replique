@@ -33,7 +33,7 @@ envelopes. Print it again after every change.
 - Kit envelope 1: _(home, where)_. Envelope 2: _(away, with whom)_. Seals signed across the flap.
 - Bitwarden vault copies: Réplique → Recovery, and the Storage Box (`replique/_replique/vault/`).
 - This plan: Réplique, the Storage Box (`replique/_replique/recovery/`), both envelopes.
-- Aegis backups: the phone's shared storage, backed up by Réplique to the Storage Box and the PC's copy.
+- Aegis backups: the phone's shared storage (`Aegis/`), backed up by Réplique to the Storage Box and the PC's copy; Réplique warns when the newest gets old.
 
 ## In case of
 

@@ -277,6 +277,7 @@ fn close_superseded(app: &App, new: &Run) -> Result<(), ApiErr> {
             error_count: 0,
             unreadable_paths: vec![],
             message: Some(SUPERSEDED.into()),
+            watched: vec![],
         };
         let raw = serde_json::to_string(&finish).map_err(|e| ApiErr::internal(e.into()))?;
         app.store.finish_run(&old.id, &finish, &raw)?;

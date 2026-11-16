@@ -129,6 +129,7 @@ fn device_config() {
         Some((2, 0))
     );
     assert_eq!(config.folders.len(), 3);
+    assert_eq!(config.watched, vec![WatchedFiles::aegis()]);
     // The default the server serves must survive the same trip.
     let default = DeviceConfig::android_default();
     let json = serde_json::to_string(&default).unwrap();
@@ -152,6 +153,10 @@ fn runs() {
 
     let ok: FinishRun = round_trip("run_finish_backup.json");
     assert_eq!(ok.status, RunStatus::from_restic_exit(ok.exit_code));
+    assert_eq!(ok.watched[0].files, 7);
+    // Reports from older apps, without it, read as nothing watched.
+    let failed: FinishRun = round_trip("run_finish_failed.json");
+    assert!(failed.watched.is_empty());
     let partial: FinishRun = round_trip("run_finish_partial.json");
     assert_eq!(partial.status, RunStatus::Partial);
     assert_eq!(partial.unreadable_paths.len(), 1);

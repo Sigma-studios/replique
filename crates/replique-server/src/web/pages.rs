@@ -9,7 +9,7 @@ use axum::response::{Html, IntoResponse, Redirect};
 use maud::{Markup, html};
 use replique_proto::{
     Conditions, DeviceConfig, DeviceKind, FolderRule, JobKind, PairingLink, Retention, RunKind,
-    RunStatus,
+    RunStatus, WatchedFiles,
 };
 use serde::Deserialize;
 
@@ -759,6 +759,64 @@ fn bitwarden_card(app: &App, device: &Device) -> Markup {
     }
 }
 
+/// One watched entry as last reported, in words.
+fn watched_status(
+    w: &WatchedFiles,
+    latest: Option<&(i64, Vec<replique_proto::WatchedReport>)>,
+) -> Markup {
+    use crate::watched::Status;
+    let files = |n: u32| alerts::plural(u64::from(n), "file");
+    match crate::watched::status(w, latest) {
+        Status::Waiting => {
+            html! { span.status { "Waiting" } " for the phone's next backup (it needs the app from November 16, 2026 or later)." }
+        }
+        Status::NoFolder { at } => {
+            html! { span.status.serious { "No folder" } " The folder did not exist at the backup " (fmt::when(at)) "." }
+        }
+        Status::NoFiles { at } => {
+            html! { span.status.serious { "None found" } " No matching file at the backup " (fmt::when(at)) "." }
+        }
+        Status::Old {
+            newest,
+            files: n,
+            at,
+        } => html! {
+            span.status.warning { "Old" } " Newest written " (fmt::when(newest)) ", over " (w.max_age_days) " days ago (" (files(n)) ", seen at the backup " (fmt::when(at)) ")."
+        },
+        Status::Fresh {
+            newest,
+            files: n,
+            at,
+        } => html! {
+            span.status.good { "Current" } " Newest written " (fmt::when(newest)) " (" (files(n)) ", seen at the backup " (fmt::when(at)) ")."
+        },
+    }
+}
+
+/// The phone's watched files, on its page.
+fn watched_card(app: &App, device: &Device) -> Markup {
+    let Some((config, _)) = app.store.device_config(&device.id).ok().flatten() else {
+        return html! {};
+    };
+    if config.watched.is_empty() {
+        return html! {};
+    }
+    let latest = crate::watched::latest(app, &device.id);
+    html! {
+        h2 { "Watched files" }
+        div.card {
+            table {
+                tbody {
+                    @for w in &config.watched {
+                        tr { td { (w.name) br; span.small.muted.mono { (w.folder) "/" (w.pattern) } } td.small { (watched_status(w, latest.as_ref())) } }
+                    }
+                }
+            }
+            p.small.muted { a href={ "/devices/" (device.id) "/rules" } { "Phone rules" } " to change them." }
+        }
+    }
+}
+
 fn rules_view(job: &Job) -> Markup {
     let r = &job.rules;
     html! {
@@ -995,6 +1053,9 @@ pub async fn device(
             @if device.kind == DeviceKind::Nixos && device.paired_at.is_some() {
                 (bitwarden_card(&app, &device))
             }
+            @if device.kind == DeviceKind::Android {
+                (watched_card(&app, &device))
+            }
             @if device.kind != DeviceKind::Android && device.paired_at.is_some() {
                 h2 { "Mirrors" }
                 div.card {
@@ -1212,6 +1273,9 @@ pub async fn rules_form(
     let edited = app.store.device_config(&id)?.map(|(_, at)| at);
     let mut folders = config.folders.clone();
     folders.push(FolderRule::default());
+    let latest = crate::watched::latest(&app, &id);
+    let mut watched: Vec<Option<&WatchedFiles>> = config.watched.iter().map(Some).collect();
+    watched.push(None);
     Ok(page(
         "Phone rules",
         "overview",
@@ -1251,6 +1315,30 @@ pub async fn rules_form(
                         label { "Excludes in this folder" textarea name={ "excludes_" (i) } { (folder.excludes.join("\n")) } }
                         @if !folder.path.is_empty() { p.small.muted { "Empty the path to remove this folder." } }
                     }
+                }
+                h2 { "Watched files" }
+                p.small.muted { "Files another app writes now and then, such as Aegis's automatic backups. After each backup the phone reports how many there are and when the newest was written (no names, no contents); a warning opens while there are none, or the newest is older than allowed." }
+                @for (i, w) in watched.iter().enumerate() {
+                    div.card {
+                        h3 { @match w { Some(w) => { (w.name) }, None => { "Watch other files" } } }
+                        @if let Some(w) = w {
+                            p.small { (watched_status(w, latest.as_ref())) }
+                            @if !crate::watched::covered(&config, &w.folder) {
+                                p.small { span.status.warning { "Not backed up" } " This folder is outside what the phone backs up: the files are watched but not saved." }
+                            }
+                        }
+                        div.grid {
+                            label { "Name" input type="text" name={ "watch_name_" (i) } value=[w.map(|w| w.name.as_str())] placeholder="Aegis backups"; }
+                            label { "Folder" input type="text" name={ "watch_folder_" (i) } value=[w.map(|w| w.folder.as_str())] placeholder="/storage/emulated/0/Aegis"; }
+                            label { "File names" span.hint { "* matches anything" } input type="text" name={ "watch_pattern_" (i) } value=[w.map(|w| w.pattern.as_str())] placeholder="aegis-backup*.json"; }
+                            label { "Warn when older than (days)" input type="number" name={ "watch_days_" (i) } min="1" value=[w.map(|w| w.max_age_days)] placeholder="30"; }
+                        }
+                        @if w.is_some() { p.small.muted { "Empty the name to stop watching." } }
+                    }
+                }
+                @if !config.watched.iter().any(|w| w.pattern.starts_with("aegis-backup")) {
+                    p.small.muted { "Aegis: in Aegis, Settings → Backups → Automatically back up the vault, in a folder named Aegis at the top of the phone's storage. Then:" }
+                    div.actions { button type="submit" name="action" value="watch_aegis" { "Watch Aegis backups" } }
                 }
                 div.actions {
                     button.primary type="submit" name="action" value="save" { "Save rules" }
@@ -1345,6 +1433,42 @@ pub fn parse_rules(pairs: &[(String, String)]) -> Result<DeviceConfig, String> {
     if folders.is_empty() {
         return Err("Keep at least one folder.".into());
     }
+    let mut watched: Vec<WatchedFiles> = Vec::new();
+    for i in 0..100 {
+        let Some(name) = get(&format!("watch_name_{i}")) else {
+            break;
+        };
+        let name = name.trim();
+        if name.is_empty() {
+            continue;
+        }
+        let field = |k: &str| get(&format!("{k}_{i}")).unwrap_or("").trim();
+        let folder = field("watch_folder").trim_end_matches('/');
+        if !folder.starts_with('/') {
+            return Err(format!("{name}: the folder is an absolute path."));
+        }
+        let pattern = field("watch_pattern");
+        if pattern.is_empty() || pattern.contains('/') {
+            return Err(format!(
+                "{name}: file names are a pattern such as aegis-backup*.json, without a folder."
+            ));
+        }
+        let max_age_days = match field("watch_days") {
+            "" => 30,
+            v => v.parse::<u32>().ok().filter(|d| *d >= 1).ok_or(format!(
+                "{name}: the age limit is a number of days, at least 1."
+            ))?,
+        };
+        if watched.iter().any(|w| w.name == name) {
+            return Err(format!("Two watched entries are named {name}."));
+        }
+        watched.push(WatchedFiles {
+            name: name.to_string(),
+            folder: folder.to_string(),
+            pattern: pattern.to_string(),
+            max_age_days,
+        });
+    }
     Ok(DeviceConfig {
         job,
         folders,
@@ -1357,6 +1481,7 @@ pub fn parse_rules(pairs: &[(String, String)]) -> Result<DeviceConfig, String> {
         interval_hours,
         daily_at,
         retention: Retention::NeverPrune,
+        watched,
     })
 }
 
@@ -1373,7 +1498,22 @@ pub async fn save_rules(
             .put_device_config(&id, &DeviceConfig::android_default())?;
         return Ok(redirect_with(&back, "ok", "Back to the defaults."));
     }
+    let watch_aegis = pairs
+        .iter()
+        .any(|(k, v)| k == "action" && v == "watch_aegis");
     match parse_rules(&pairs) {
+        Ok(mut config) if watch_aegis => {
+            let aegis = WatchedFiles::aegis();
+            if !config.watched.iter().any(|w| w.name == aegis.name) {
+                config.watched.push(aegis);
+            }
+            app.store.put_device_config(&id, &config)?;
+            Ok(redirect_with(
+                &back,
+                "ok",
+                "Watching Aegis backups; the first report comes with the phone's next backup.",
+            ))
+        }
         Ok(config) => {
             app.store.put_device_config(&id, &config)?;
             Ok(redirect_with(

@@ -285,6 +285,8 @@ data class DeviceConfig(
     /** `HH:MM` in the phone's time zone: run once a day then, instead of every [intervalHours]. */
     @SerialName("daily_at") val dailyAt: String? = null,
     val retention: Retention,
+    /** Files whose age the app reports after each backup ([FinishRun.watched]). */
+    val watched: List<WatchedFiles> = emptyList(),
 ) {
     companion object {
         const val ANDROID_SHARED_STORAGE = "/storage/emulated/0"
@@ -413,6 +415,34 @@ data class FinishRun(
     @SerialName("error_count") val errorCount: Long = 0,
     @SerialName("unreadable_paths") val unreadablePaths: List<String> = emptyList(),
     val message: String? = null,
+    /** For a backup: what was found of each watched entry when it ended. */
+    val watched: List<WatchedReport> = emptyList(),
+)
+
+/**
+ * Files another app writes now and then (Aegis's automatic backups) whose
+ * newest should not get old. `WatchedFiles` in the crate.
+ */
+@Serializable
+data class WatchedFiles(
+    val name: String,
+    val folder: String,
+    /** File names: `*` matches any run of characters, `?` one. */
+    val pattern: String,
+    @SerialName("max_age_days") val maxAgeDays: Int,
+) {
+    companion object {
+        fun aegis() = WatchedFiles("Aegis backups", "${DeviceConfig.ANDROID_SHARED_STORAGE}/Aegis", "aegis-backup*.json", 30)
+    }
+}
+
+/** One watched entry as found on the phone: a count and a date, no names. */
+@Serializable
+data class WatchedReport(
+    val name: String,
+    @SerialName("folder_found") val folderFound: Boolean,
+    val files: Int,
+    @Serializable(with = InstantSerializer::class) val newest: Instant? = null,
 )
 
 @Serializable

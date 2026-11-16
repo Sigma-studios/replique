@@ -206,6 +206,7 @@ mod tests {
             error_count: 0,
             unreadable_paths: vec![],
             message: None,
+            watched: vec![],
         };
         let mut r = run(RunKind::Backup, None, Some(f.clone()));
         // No network count: what it added to the repository.

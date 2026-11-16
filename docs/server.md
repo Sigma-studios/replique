@@ -221,6 +221,22 @@ too, in its own folder `replique/_replique` (a writable sub-account it creates
 the first time; every other login it holds is read-only), so they can be read
 with Hetzner access alone.
 
+## Watched files
+
+A phone's rules can list files another app writes now and then, whose newest
+copy should not get old. Aegis's automatic backups are the case in mind: the
+phone's backup carries them to the box, but only Aegis knows whether it still
+writes them (it can lose its folder, or its permission to it, without a word
+outside the app). After each backup the phone reports how many match and when
+the newest was written; a warning opens while the folder or the files are
+missing, or the newest is older than the entry allows (30 days for Aegis), and
+clears with the next good report. **Watch Aegis backups** on the Phone rules
+page adds the entry: `/storage/emulated/0/Aegis`, `aegis-backup*.json`.
+
+Aegis writes a backup when its vault changes, not on a schedule, so an old
+backup is usually an unchanged vault. Settings → Backups → *Trigger backup* in
+Aegis settles it: a fresh file, and proof the folder is still writable.
+
 ## What the website shows
 
 * **Overview:** the Storage Box, split by device; then a row per sub-account

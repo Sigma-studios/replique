@@ -171,6 +171,7 @@ mod tests {
                 error_count: 0,
                 unreadable_paths: vec![],
                 message: None,
+                watched: vec![],
             }),
             finish_raw: None,
             exit_code: Some(0),

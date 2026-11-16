@@ -132,6 +132,7 @@ fn finish(status: RunStatus, exit_code: i32) -> FinishRun {
         error_count: 0,
         unreadable_paths: vec![],
         message: None,
+        watched: vec![],
     }
 }
 
@@ -1603,4 +1604,122 @@ async fn vault_copies_and_the_recovery_kit() {
     assert!(plan.contains("Envelope 2 is with Alex"));
     let kit = std::fs::read_to_string(area.join("recovery/kit.md")).unwrap();
     assert!(kit.contains("Aegis password") && kit.contains("written:"));
+}
+
+#[tokio::test]
+async fn watched_files_on_the_phone() {
+    let server = start("").await;
+    let browser = Browser::login(&server.url).await;
+    let (_, location) = browser
+        .post("/devices", &[("name", "Phone"), ("kind", "android")])
+        .await;
+    let phone_id = location.trim_start_matches("/devices/").to_string();
+    let code = pairing_code(&browser, &phone_id).await;
+    let (phone, _) = Device::pair(&server.url, &code, DeviceKind::Android)
+        .await
+        .unwrap();
+    let rules = format!("/devices/{phone_id}/rules");
+    let (_, page) = browser.get(&rules).await;
+    assert!(page.contains("Watch Aegis backups"));
+    let form = |extra: &[(&'static str, &'static str)]| {
+        let mut f = vec![
+            ("job", "phone"),
+            ("interval_hours", "24"),
+            ("path_0", "/storage/emulated/0"),
+        ];
+        f.extend_from_slice(extra);
+        f
+    };
+    let (status, location) = browser
+        .post(&rules, &form(&[("action", "watch_aegis")]))
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(location.contains("ok="), "{location}");
+    let config: replique_proto::DeviceConfig =
+        phone.get(paths::DEVICE_CONFIG).await.json().await.unwrap();
+    assert_eq!(config.watched, vec![replique_proto::WatchedFiles::aegis()]);
+
+    let titles = || -> Vec<String> {
+        server
+            .app
+            .store
+            .open_alerts()
+            .unwrap()
+            .into_iter()
+            .filter(|a| a.kind == "watched")
+            .map(|a| a.title)
+            .collect()
+    };
+    let evaluate = || replique_server::alerts::evaluate(&server.app);
+    // Nothing reported yet: no alert, the page waits.
+    evaluate().await.unwrap();
+    assert!(titles().is_empty(), "{:?}", titles());
+    let (_, page) = browser.get(&format!("/devices/{phone_id}")).await;
+    assert!(page.contains("Watched files") && page.contains("Waiting"));
+
+    let start = chrono::Utc::now() - chrono::Duration::hours(10);
+    let mut n = 0;
+    let mut report = |files: u32, newest_days_ago: Option<i64>| {
+        n += 1;
+        let at = start + chrono::Duration::hours(n);
+        let phone = &phone;
+        async move {
+            let run = phone.start("phone", RunKind::Backup, &uuid(), at).await;
+            let mut done = finish(RunStatus::Success, 0);
+            done.finished_at = at;
+            done.watched = vec![replique_proto::WatchedReport {
+                name: "Aegis backups".into(),
+                folder_found: true,
+                files,
+                newest: newest_days_ago.map(|d| chrono::Utc::now() - chrono::Duration::days(d)),
+            }];
+            assert_eq!(phone.finish(&run, &done).await, StatusCode::OK);
+        }
+    };
+    report(0, None).await;
+    evaluate().await.unwrap();
+    assert_eq!(titles(), vec!["Phone: no Aegis backups found"]);
+    // Found, but old: the alert says so instead.
+    report(3, Some(40)).await;
+    evaluate().await.unwrap();
+    assert_eq!(
+        titles(),
+        vec!["Phone: no new Aegis backups for over 30 days"]
+    );
+    let alert = server
+        .app
+        .store
+        .open_alert(&format!("watched:{phone_id}:Aegis backups"))
+        .unwrap()
+        .unwrap();
+    assert!(alert.detail.contains("Trigger backup"), "{}", alert.detail);
+    // A fresh one clears it.
+    report(4, Some(1)).await;
+    evaluate().await.unwrap();
+    assert!(titles().is_empty(), "{:?}", titles());
+    let (_, page) = browser.get(&format!("/devices/{phone_id}")).await;
+    assert!(page.contains("Current"));
+    // No longer watched: an open warning goes with it.
+    report(4, Some(40)).await;
+    evaluate().await.unwrap();
+    assert_eq!(titles().len(), 1);
+    let (status, _) = browser
+        .post(&rules, &form(&[("watch_name_0", ""), ("action", "save")]))
+        .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    evaluate().await.unwrap();
+    assert!(titles().is_empty(), "{:?}", titles());
+    // Bad entries are refused.
+    let (_, location) = browser
+        .post(
+            &rules,
+            &form(&[
+                ("watch_name_0", "Notes"),
+                ("watch_folder_0", "Documents"),
+                ("watch_pattern_0", "*.md"),
+                ("action", "save"),
+            ]),
+        )
+        .await;
+    assert!(location.contains("error="), "{location}");
 }

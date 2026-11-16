@@ -22,5 +22,8 @@
   },
   "errors": [],
   "error_count": 0,
-  "unreadable_paths": []
+  "unreadable_paths": [],
+  "watched": [
+    { "name": "Aegis backups", "folder_found": true, "files": 7, "newest": "2026-11-12T18:40:02Z" }
+  ]
 }

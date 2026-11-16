@@ -20,6 +20,7 @@ import eu.sigmadev.replique.proto.RunStatus
 import eu.sigmadev.replique.proto.SafeToDelete
 import eu.sigmadev.replique.proto.StartRun
 import eu.sigmadev.replique.proto.StartRunReply
+import eu.sigmadev.replique.proto.WatchedFiles
 import eu.sigmadev.replique.proto.Wire
 import java.io.File
 import java.time.Instant
@@ -133,6 +134,7 @@ class ProtocolFixturesTest {
         assertEquals("phone", c.job)
         assertEquals(3, c.folders.size)
         assertEquals(2147483648L, c.folders[1].maxFileSizeBytes)
+        assertEquals(WatchedFiles.aegis(), c.watched.single())
         assertEquals(listOf("apk", "iso"), c.folders[1].excludeExtensions)
         assertEquals(listOf("pdf", "odt", "txt"), c.folders[2].onlyExtensions)
         assertEquals(Conditions(unmeteredOnly = true, chargingOnly = true, minBatteryPercent = 30), c.conditions)
@@ -203,6 +205,9 @@ class ProtocolFixturesTest {
         assertEquals(RunStatus.Success, backup.status)
         assertEquals("60b9632cb99dc43c73727a1da5bb5c48f719c8942bfee76c11b0deadfa744b61", backup.summary!!.snapshotId)
         assertEquals(20928.41, backup.summary!!.totalDuration, 1e-9)
+        val aegis = backup.watched.single()
+        assertEquals(7, aegis.files)
+        assertEquals(java.time.Instant.parse("2026-11-12T18:40:02Z"), aegis.newest)
 
         val partial = parse("run_finish_partial.json", FinishRun.serializer())
         assertEquals(RunStatus.Partial, partial.status)

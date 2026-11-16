@@ -23,5 +23,8 @@
   "conditions": { "unmetered_only": true, "charging_only": true, "min_battery_percent": 30 },
   "interval_hours": 24,
   "daily_at": "02:00",
-  "retention": { "policy": "never-prune" }
+  "retention": { "policy": "never-prune" },
+  "watched": [
+    { "name": "Aegis backups", "folder": "/storage/emulated/0/Aegis", "pattern": "aegis-backup*.json", "max_age_days": 30 }
+  ]
 }

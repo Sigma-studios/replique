@@ -173,6 +173,23 @@ pub struct FinishRun {
     /// (`/mnt/windows is not a mountpoint`, `restic not found`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    /// For a backup: what the app found of each of its `DeviceConfig::watched`
+    /// entries when the run ended, whatever restic did.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub watched: Vec<WatchedReport>,
+}
+
+/// One `WatchedFiles` entry as found on the device.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct WatchedReport {
+    /// The entry's `name`.
+    pub name: String,
+    pub folder_found: bool,
+    /// Files in the folder matching the pattern.
+    pub files: u32,
+    /// When the newest of them was last written.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub newest: Option<Timestamp>,
 }
 
 /// One of restic's `error` messages, or one of the client's own.

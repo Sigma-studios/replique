@@ -123,6 +123,10 @@ keep, how often, and whether scheduled runs wait for Wi-Fi and charging. "Back
 up now" ignores the conditions. The Home screen lists what is and is not covered.
 A memory card (`/storage/XXXX-XXXX`) is not backed up unless the rules add it.
 
+The rules can also name files to watch (`watched`), such as Aegis's automatic
+backups: after each backup the app reports how many match and when the newest
+was written, and Réplique warns when they are missing or getting old.
+
 After every backup the app runs `restic check` (structure only, no data read
 back) and reports it as a `check` run listing the snapshot ids it covered; that
 is what makes them "verified on Hetzner" for the safe-to-delete answer.

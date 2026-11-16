@@ -203,6 +203,12 @@ to "Back up now". `daily_at` (`"02:00"`, the phone's own time) runs the backup
 once a day at that time instead of every `interval_hours`; a run due while the
 conditions are not met waits for them.
 
+`watched` lists files another app writes now and then, whose newest should not
+get old: `name` (`Aegis backups`), `folder`, `pattern` (file names in that
+folder, not below it; `*` matches any run of characters, `?` one) and
+`max_age_days`. Absent when there are none. The app reports on them with each
+backup's finish (below).
+
 ## Runs
 
 Every restic operation is reported as a run: start, progress, finish. A backup
@@ -264,7 +270,8 @@ counts what it read, unchanged files included, so it is no upload measure.
   "summary": { "files_new": 1204, "data_added_packed": 2811445760, "snapshot_id": "60b9…", "…": "…" },
   "errors": [],
   "error_count": 0,
-  "unreadable_paths": []
+  "unreadable_paths": [],
+  "watched": [{ "name": "Aegis backups", "folder_found": true, "files": 7, "newest": "2026-11-12T18:40:02Z" }]
 }
 ```
 
@@ -280,6 +287,10 @@ counts what it read, unchanged files included, so it is no upload measure.
 * `unreadable_paths`: the `item`s restic could not read (exit 3).
 * `message`: a one-line reason when the run failed before restic ran
   (`/mnt/windows/c is not a mountpoint`).
+* `watched`: for a backup, each of the rules' `watched` entries as found when
+  the run ended, whatever restic did: whether the folder exists, how many files
+  match, and when the newest was last written. No names, no contents. Absent
+  from older apps, read as nothing reported.
 
 Finish is spooled when the server is unreachable and replayed in order (after
 replaying the run's start). A repeated finish with the same content is accepted;

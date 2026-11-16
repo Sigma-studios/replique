@@ -152,6 +152,8 @@ class BackupRunner(
             errorCount = errorCount,
             unreadablePaths = unreadable.toList(),
             message = message,
+            // Whatever restic did: the files' age does not depend on it.
+            watched = runCatching { Watched.report(config.watched) }.getOrDefault(emptyList()),
         )
 
         val finish: FinishRun = try {
