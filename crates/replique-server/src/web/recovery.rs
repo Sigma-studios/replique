@@ -300,8 +300,17 @@ pub async fn update_entry(
             "Give the entry a name.",
         ));
     }
-    app.store.update_recovery_entry(id, name, f.hint.trim())?;
-    recovery::bump(&app)?;
+    let hint = f.hint.trim();
+    // Saved unchanged: the envelopes are still current.
+    let unchanged = app
+        .store
+        .recovery_entries()?
+        .iter()
+        .any(|e| e.id == id && e.name == name && e.hint == hint);
+    if !unchanged {
+        app.store.update_recovery_entry(id, name, hint)?;
+        recovery::bump(&app)?;
+    }
     Ok(redirect_with("/recovery", "ok", "Entry saved."))
 }
 

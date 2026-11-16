@@ -1558,6 +1558,16 @@ async fn vault_copies_and_the_recovery_kit() {
         "{:?}",
         titles()
     );
+    // An entry saved unchanged leaves the envelopes current.
+    let first = server.app.store.recovery_entries().unwrap().remove(0);
+    let before = replique_server::recovery::version(&server.app);
+    browser
+        .post(
+            &format!("/recovery/entries/{}", first.id),
+            &[("name", first.name.as_str()), ("hint", first.hint.as_str())],
+        )
+        .await;
+    assert_eq!(replique_server::recovery::version(&server.app), before);
     // A changed plan makes the envelopes out of date.
     let (status, _) = browser
         .post(
