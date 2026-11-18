@@ -39,6 +39,13 @@ class RepliqueApp : Application() {
         secretStore = KeystoreSecretStore(File(filesDir, "secrets.bin"))
         spool = Spool(File(filesDir, "spool"))
         Notifications.createChannels(this)
+        // A schedule enqueued by an older version keeps its old constraints
+        // until redone: once per version, at the first start after an update.
+        val state = store.current
+        if (state.pairing != null && state.scheduleVersion < Scheduler.VERSION && canReadSharedStorage()) {
+            Scheduler.schedule(this, state.effectiveConfig)
+            store.update { it.copy(scheduleVersion = Scheduler.VERSION) }
+        }
     }
 
     val userAgent: String

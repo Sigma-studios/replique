@@ -26,6 +26,13 @@ object Scheduler {
     const val WHEN_CHARGING = "replique-when-charging"
 
     /**
+     * Bumped when the periodic work's request changes shape: an existing
+     * schedule is otherwise kept as enqueued (version 2 dropped Android's
+     * charging constraint, which an older schedule still carried).
+     */
+    const val VERSION = 2
+
+    /**
      * The network condition only. "While charging" is checked by the worker
      * itself, as "plugged in": Android's charging constraint is false for a
      * phone plugged in but held at a charge limit (80%), which would skip

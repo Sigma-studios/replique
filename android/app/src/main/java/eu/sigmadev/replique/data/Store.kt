@@ -69,6 +69,8 @@ data class PersistedState(
     @SerialName("last_backup") val lastBackup: RunRecord? = null,
     @SerialName("last_check") val lastCheck: RunRecord? = null,
     @SerialName("foreground_usage") val foregroundUsage: List<Interval> = emptyList(),
+    /** The [eu.sigmadev.replique.backup.Scheduler.VERSION] the periodic work was last enqueued with. */
+    @SerialName("schedule_version") val scheduleVersion: Int = 0,
     @SerialName("safe_to_delete") val safeToDelete: SafeToDelete? = null,
     @SerialName("safe_to_delete_checked_at") @Serializable(with = InstantSerializer::class)
     val safeToDeleteCheckedAt: Instant? = null,
