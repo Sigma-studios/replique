@@ -108,6 +108,7 @@ makes it `2770 replique-client:replique-client` and puts every job user in the
 | `ssh/include.conf` | the same, root's, included by `/etc/ssh/ssh_config` (OpenSSH refuses an included file that is not root's or is group-writable, and then every connection fails) | 0644 |
 | `spool/` | reports waiting for the server; `spool/rejected/` the ones it refused | |
 | `runs/<job>.json` | each job's last runs, for `status` | |
+| `runs/<job>.current.json` | the job's run in progress, for `status` (see [Status](#status)) | |
 | `declared/<job>.json` | the job declaration the server last accepted | |
 | `excludes/<job>.txt` | the exclude file of the last run, generated part included | |
 | `mirror/` | mirror jobs: verified files, cached mirror sources | |
@@ -128,9 +129,54 @@ default the configuration's `state_dir`, else `/var/lib/replique-client`).
 | `pair <url> <code>` / `pair <link>` | Pairs this device. `--adopt <key-file> <password-file>` keeps an existing key and password; `--name` the name it gives itself (the website's wins); `--yes` skips the confirmation (the password is still printed); `--no-init` leaves the repository alone; `--force` pairs over an existing pairing. |
 | `run <job>` | Runs a job: for a backup, the backup, then its prune, then its check; for a mirror, the mirror. Exits with restic's code (rclone's for a mirror): `0` success, `3` some files unreadable, `10` no repository, `11` locked, `12` wrong password, `130` interrupted; `1` when the run was refused (a missing mount). |
 | `mirror <job>` | `run` for a mirror job (refuses a backup job). |
-| `status [--json]` | The last backup, prune, check and mirror of each job: status, when, how long, whether the report was sent or is spooled, what it found. |
+| `status [--json]` | The last backup, prune, check and mirror of each job: status, when, how long, whether the report was sent or is spooled, what it found; and the run going on, if any (see [Status](#status)). |
 | `restic <job> <args…>` | restic on the job's repository with the job's password and SSH settings: `replique-client restic hetzner snapshots`. For a mirror job, the local copy, with `--no-lock` and no password (restic asks for the source's). The module's `replique-<job>` commands call this. |
 | `excludes <job>` | Writes and prints the job's exclude file, as the next run would. |
+
+### Status
+
+`status` reads the state directory only, so it answers without the server. A
+table of each job's last run of each kind, then a line per job running now:
+
+```
+hetzner: backup running for 1h12m, 43% (1.2 TiB of 2.8 TiB), about 1h05m left
+hetzner: check running for 2m10s, checking snapshots and trees
+```
+
+(the phase when the run gives no percentage). `status --json` is for scripts,
+such as a desktop bar widget:
+
+```json
+{
+  "hetzner": {
+    "backup": { "kind": "backup", "status": "success", "finished_at": "…", "delivery": "sent", "detail": "…", … },
+    "prune": { … },
+    "check": { … },
+    "current": {
+      "kind": "backup",
+      "client_run_id": "0b6c8a4e-…",
+      "started_at": "2026-11-18T08:12:14Z",
+      "pid": 1878,
+      "progress": { "at": "…", "percent_done": 0.43, "seconds_remaining": 3900, "bytes_done": …, "total_bytes": …, "files_done": …, "total_files": …, "phase": "…" }
+    }
+  }
+}
+```
+
+Each configured job is listed, with its last run of each kind (`backup`,
+`prune`, `check`, `mirror`; absent until one ran). `current` is there only while
+a run goes on; `progress` is the protocol's progress, absent until the run
+reports any. A job no longer configured is listed only while it runs.
+
+The running client keeps `runs/<job>.current.json`: written when a run starts,
+rewritten with its progress at most every 5 seconds (whether the server is
+reachable or not), removed when the run ends. A backup's prune and check, in the
+same process, each take it over in turn. A client killed outright (SIGKILL, a
+power cut) leaves it behind, so it counts only while its `pid` is a running
+`replique-client`: on Linux `/proc/<pid>/cmdline` must name one, so a pid
+reused since by another process does not count (elsewhere, `ps -o comm=`). The
+age of the last progress is not used: restic can stay silent for long. A file
+that does not pass is ignored, and removed by the first `status` allowed to.
 
 ### What a backup run does
 

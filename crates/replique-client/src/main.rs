@@ -54,7 +54,7 @@ enum Cmd {
     Run { job: String },
     /// Run a mirror job (same as `run` for one).
     Mirror { job: String },
-    /// Show the last runs of each job.
+    /// Show the last runs of each job, and the ones going on.
     Status {
         #[arg(long)]
         json: bool,
@@ -133,13 +133,7 @@ fn real_main(cli: Cli) -> Result<i32, Error> {
         }
         Cmd::Status { json } => {
             if json {
-                let mut all = serde_json::Map::new();
-                for job in config.jobs.keys() {
-                    all.insert(
-                        job.clone(),
-                        serde_json::to_value(status::load(&state, job))?,
-                    );
-                }
+                let all = status::json(&config, &state)?;
                 println!("{}", serde_json::to_string_pretty(&all)?);
             } else {
                 print!("{}", status::render(&config, &state));

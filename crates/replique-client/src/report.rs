@@ -1,5 +1,7 @@
 //! Reporting runs: start, throttled progress, finish, with the spool behind them
-//! so that a report is never lost while the server is down.
+//! so that a report is never lost while the server is down. The run going on is
+//! also kept in the state directory for `status` (see `status::CurrentRun`),
+//! server or not.
 
 use std::fs;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
@@ -15,8 +17,12 @@ use crate::api::{Api, ApiError};
 use crate::config::{ClientConfig, JobConfig};
 use crate::spool::{Entry, Held, Spool};
 use crate::state::{Kind, State};
-use crate::status::{self, Delivery, RunRecord};
+use crate::status::{self, CurrentRun, Delivery, RunRecord};
 use crate::{Error, client_version, log};
+
+/// How often the run in progress is rewritten for `status`. Its readers look
+/// every ten seconds at most; restic prints a status every two.
+const CURRENT_MIN_INTERVAL: Duration = Duration::from_secs(5);
 
 pub struct Reporter {
     pub state: State,
@@ -36,12 +42,23 @@ pub struct Run {
     progress_tx: Option<SyncSender<Progress>>,
     progress_thread: Option<JoinHandle<()>>,
     last_progress: Option<Instant>,
+    last_current: Option<Instant>,
     started: Instant,
 }
 
 impl Run {
     pub fn kind(&self) -> RunKind {
         self.start.kind
+    }
+
+    fn current(&self, progress: Option<Progress>) -> CurrentRun {
+        CurrentRun {
+            kind: self.start.kind,
+            client_run_id: self.start.client_run_id.clone(),
+            started_at: self.start.started_at,
+            pid: std::process::id(),
+            progress,
+        }
     }
 
     pub fn elapsed(&self) -> Duration {
@@ -144,8 +161,15 @@ impl Reporter {
             progress_tx: None,
             progress_thread: None,
             last_progress: None,
+            last_current: None,
             started: Instant::now(),
         };
+        // Before the server is called, which can take its whole timeout. Prune
+        // and check run after the backup in the same process: each start
+        // replaces the previous run's file.
+        if let Err(e) = status::record_current(&self.state, &self.job, &run.current(None)) {
+            log!("could not record the run in progress for `status`: {e}");
+        }
         let result = match &self.api {
             Some(api) => api.start_run(&run.start),
             None => Err(ApiError::Unreachable("not paired".into())),
@@ -182,7 +206,17 @@ impl Reporter {
     }
 
     /// Forwards progress at most every 10 seconds; never waits on the network.
+    /// Records it for `status` first, on its own clock, so that a run with no
+    /// server to send it to still shows how far along it is.
     pub fn progress(&self, run: &mut Run, p: Progress) {
+        if run
+            .last_current
+            .is_none_or(|t| t.elapsed() >= CURRENT_MIN_INTERVAL)
+        {
+            // Already said at the start if the state directory is not writable.
+            let _ = status::record_current(&self.state, &self.job, &run.current(Some(p.clone())));
+            run.last_current = Some(Instant::now());
+        }
         let Some(tx) = &run.progress_tx else { return };
         let due = run
             .last_progress
@@ -252,5 +286,6 @@ impl Reporter {
                 detail: status::detail(&finish),
             },
         );
+        status::clear_current(&self.state, &self.job);
     }
 }
