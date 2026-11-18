@@ -617,9 +617,16 @@ pub async fn evaluate(app: &Arc<App>) -> anyhow::Result<()> {
                             crate::web::fmt::duration(now - last)
                         ),
                         detail: format!(
-                            "Expected every {}; the last one started {}.",
+                            "Expected every {}; the last one started {}.{}",
                             crate::web::fmt::duration(interval),
-                            crate::web::fmt::datetime(last)
+                            crate::web::fmt::datetime(last),
+                            crate::skips::current(app, job.id)
+                                .map(|s| format!(
+                                    " The device says the last one due did not start ({}): {}",
+                                    crate::web::fmt::datetime(s.at.timestamp()),
+                                    s.message
+                                ))
+                                .unwrap_or_default()
                         ),
                         device_id: Some(&device.id),
                     },

@@ -26,6 +26,7 @@ object Api {
     const val MIRROR_SOURCES = "/api/v1/mirror-sources"
 
     fun job(name: String) = "/api/v1/jobs/$name"
+    fun jobSkipped(name: String) = "/api/v1/jobs/$name/skipped"
     fun runProgress(runId: String) = "/api/v1/runs/$runId/progress"
     fun runFinish(runId: String) = "/api/v1/runs/$runId/finish"
     fun safeToDelete(deviceId: String) = "/api/v1/devices/$deviceId/safe-to-delete"
@@ -418,6 +419,23 @@ data class FinishRun(
     /** For a backup: what was found of each watched entry when it ended. */
     val watched: List<WatchedReport> = emptyList(),
 )
+
+/** `POST /jobs/{name}/skipped`: a scheduled run came due but did not start. */
+@Serializable
+data class SkippedRun(
+    @Serializable(with = InstantSerializer::class) val at: Instant,
+    val reason: SkipReason,
+    /** The reason in words, with what happens next. */
+    val message: String,
+)
+
+@Serializable
+enum class SkipReason {
+    @SerialName("not_plugged_in") NotPluggedIn,
+    @SerialName("battery_low") BatteryLow,
+    @SerialName("foreground_refused") ForegroundRefused,
+    @SerialName("daily_limit") DailyLimit,
+}
 
 /**
  * Files another app writes now and then (Aegis's automatic backups) whose

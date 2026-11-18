@@ -99,11 +99,26 @@ the app resets the allowance (Android does the same).
 
 ## When it runs
 
-Daily by default, as soon as the phone is charging on Wi-Fi. In the phone rules
-on the website, **Every night at** picks a time instead (`02:00`, the phone's
-own time): the backup starts then, or as soon as the conditions are met after
-it. Home shows the next run, and during a run the upload rate (`Envoi`), from
+Daily by default, on Wi-Fi with the phone plugged in. In the phone rules on the
+website, **Every night at** picks a time instead (`02:00`, the phone's own
+time). Home shows the next run, and during a run the upload rate (`Envoi`), from
 Android's count of what the app sent; the website shows it too.
+
+"While charging" means plugged in, checked by the app when the run comes due:
+Android's own charging condition is false for a phone held at a charge limit
+(80%), which skipped every night of a phone protecting its battery. A run that
+finds the phone on battery (or below the minimum battery level) does not start:
+the app says so in a quiet notification, tells Réplique (the job's card shows
+why it is late), and runs as soon as the phone charges. The same goes for
+Android refusing to start it, or its daily allowance for background transfers
+being used up.
+
+When a backup finishes, a quiet notification says what it sent: the size of
+what changed since the last one, and how many files are new or modified.
+
+Rule changes from the website that touch the timing (the time, the interval,
+the Wi-Fi condition) redo the schedule after the run that fetched them; other
+changes leave the schedule alone.
 
 ## What is backed up, and what is not
 

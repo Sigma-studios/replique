@@ -1723,3 +1723,47 @@ async fn watched_files_on_the_phone() {
         .await;
     assert!(location.contains("error="), "{location}");
 }
+
+#[tokio::test]
+async fn a_scheduled_run_that_did_not_start() {
+    let server = start("").await;
+    let browser = Browser::login(&server.url).await;
+    let (_, location) = browser
+        .post("/devices", &[("name", "Phone"), ("kind", "android")])
+        .await;
+    let phone_id = location.trim_start_matches("/devices/").to_string();
+    let code = pairing_code(&browser, &phone_id).await;
+    let (phone, _) = Device::pair(&server.url, &code, DeviceKind::Android)
+        .await
+        .unwrap();
+    let hour_ago = chrono::Utc::now() - chrono::Duration::hours(1);
+    let run = phone
+        .start("phone", RunKind::Backup, &uuid(), hour_ago)
+        .await;
+    let mut done = finish(RunStatus::Success, 0);
+    done.finished_at = hour_ago;
+    assert_eq!(phone.finish(&run, &done).await, StatusCode::OK);
+
+    let skip = replique_proto::SkippedRun {
+        at: chrono::Utc::now(),
+        reason: replique_proto::SkipReason::NotPluggedIn,
+        message: "Le téléphone n'était pas branché".into(),
+    };
+    let r = phone
+        .send(reqwest::Method::POST, &paths::job_skipped("phone"), &skip)
+        .await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let r = phone
+        .send(reqwest::Method::POST, &paths::job_skipped("nope"), &skip)
+        .await;
+    assert_eq!(r.status(), StatusCode::NOT_FOUND);
+    let (_, page) = browser.get(&format!("/devices/{phone_id}")).await;
+    assert!(page.contains("Didn't start"), "the job card says why");
+    assert!(page.contains("n&#39;était pas branché") || page.contains("n'était pas branché"));
+
+    // A run started since: the skip is history.
+    let later = chrono::Utc::now() + chrono::Duration::seconds(2);
+    phone.start("phone", RunKind::Backup, &uuid(), later).await;
+    let (_, page) = browser.get(&format!("/devices/{phone_id}")).await;
+    assert!(!page.contains("Didn't start"));
+}

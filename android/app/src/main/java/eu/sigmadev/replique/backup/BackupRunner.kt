@@ -51,6 +51,12 @@ data class Outcome(
     val skipped: String? = null,
     /** The backup hit [BackupRunner.run]'s deadline: schedule a continuation. */
     val stoppedAtDeadline: Boolean = false,
+    /**
+     * New timing rules arrived during the run: the schedule is redone with
+     * them once the run's worker is done, not during the run, since redoing
+     * a daily schedule cancels the periodic work, the run itself included.
+     */
+    val reschedule: DeviceConfig? = null,
 )
 
 /**
@@ -82,6 +88,7 @@ class BackupRunner(
      */
     suspend fun run(deadline: Instant? = null, canReadStorage: Boolean = true): Outcome {
         if (!mutex.tryLock()) return Outcome(skipped = "Une sauvegarde est déjà en cours.")
+        pendingReschedule = null
         try {
             val pairing = store.current.pairing ?: return Outcome(skipped = "Not paired")
             val secrets = secretStore.load() ?: return Outcome(skipped = "Not paired")
@@ -97,7 +104,7 @@ class BackupRunner(
                 check = check(api, restic, config)
             }
             refreshSafeToDelete(api, pairing)
-            return Outcome(backup = backup, check = check, stoppedAtDeadline = atDeadline)
+            return Outcome(backup = backup, check = check, stoppedAtDeadline = atDeadline, reschedule = pendingReschedule)
         } finally {
             live.value = LiveRun()
             mutex.unlock()
@@ -114,8 +121,12 @@ class BackupRunner(
         when (val reply = io { api.deviceConfig(before.configEtag.takeIf { before.config != null }) }) {
             is ApiResult.Ok -> {
                 store.update { it.copy(config = reply.value, configEtag = reply.etag) }
-                // New interval or conditions from the website: the schedule follows.
-                if (reply.value != before.config) onConfigChanged(reply.value)
+                // New timing from the website: the schedule follows. Other
+                // rules (folders, watched files) leave it alone. During a run
+                // the change waits for the run to end (see Outcome.reschedule).
+                if (timingChanged(before.effectiveConfig, reply.value)) {
+                    if (mutex.isLocked) pendingReschedule = reply.value else onConfigChanged(reply.value)
+                }
             }
             else -> Unit
         }
@@ -358,6 +369,8 @@ class BackupRunner(
             filesProcessed = finish.summary?.totalFilesProcessed ?: 0,
             bytesProcessed = finish.summary?.totalBytesProcessed ?: 0,
             bytesAdded = finish.summary?.dataAddedPacked ?: 0,
+            filesNew = finish.summary?.filesNew ?: 0,
+            filesChanged = finish.summary?.filesChanged ?: 0,
             errorCount = finish.errorCount,
             unreadablePaths = finish.unreadablePaths.take(20),
         )
@@ -387,6 +400,15 @@ class BackupRunner(
     companion object {
         /** One restic at a time: a scheduled run and "Back up now" share this. */
         private val mutex = Mutex()
+
+        /** Set by [refreshConfig] during a run, handed back in [Outcome.reschedule]. */
+        @Volatile private var pendingReschedule: DeviceConfig? = null
+
+        /** What the schedule depends on: the time or interval, and the network condition. */
+        fun timingChanged(before: DeviceConfig, after: DeviceConfig): Boolean =
+            before.dailyAt != after.dailyAt ||
+                before.intervalHours != after.intervalHours ||
+                before.conditions != after.conditions
 
         const val TAG = "replique"
 

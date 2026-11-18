@@ -18,6 +18,7 @@ import eu.sigmadev.replique.proto.Retention
 import eu.sigmadev.replique.proto.RunKind
 import eu.sigmadev.replique.proto.RunStatus
 import eu.sigmadev.replique.proto.SafeToDelete
+import eu.sigmadev.replique.proto.SkippedRun
 import eu.sigmadev.replique.proto.StartRun
 import eu.sigmadev.replique.proto.StartRunReply
 import eu.sigmadev.replique.proto.WatchedFiles
@@ -79,6 +80,7 @@ class ProtocolFixturesTest {
         "run_progress_phase.json" to Progress.serializer(),
         "run_start.json" to StartRun.serializer(),
         "run_start_reply.json" to StartRunReply.serializer(),
+        "skipped_run.json" to SkippedRun.serializer(),
         "safe_to_delete.json" to SafeToDelete.serializer(),
         "safe_to_delete_none.json" to SafeToDelete.serializer(),
     )

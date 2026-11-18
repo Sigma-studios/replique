@@ -19,6 +19,7 @@ pub mod provision;
 pub mod recovery;
 pub mod restore;
 pub mod secrets;
+pub mod skips;
 pub mod ssh;
 pub mod storage;
 pub mod transfer;

@@ -869,6 +869,9 @@ fn device_live(app: &App, ctx: &Ctx, device: &Device) -> anyhow::Result<Markup> 
                         }
                         @if let Some(r) = &v.running { (progress_block(r)) }
                         @if let Some(r) = &v.last { div { (last_run_line(r)) } }
+                        @if v.running.is_none() && let Some(s) = crate::skips::current(app, v.job.id) {
+                            p.small style="margin: 0.3rem 0" { span.status.warning { "Didn't start" } " " (fmt::when(s.at.timestamp())) ": " (s.message) }
+                        }
                         @if let Some(t) = crate::transfer::of_job(app, v.job.id, db::now() - 30 * 86_400) {
                             p.small style="margin: 0.3rem 0" {
                                 "Transfer, last 30 days: average " strong { (fmt::bytes(t.average as i64)) "/s" }

@@ -142,6 +142,13 @@ fn device_config() {
 
 #[test]
 fn runs() {
+    let skipped: SkippedRun = round_trip("skipped_run.json");
+    assert_eq!(skipped.reason, SkipReason::NotPluggedIn);
+    // A reason from a newer app reads as `other`, not as an error.
+    let newer: SkippedRun =
+        serde_json::from_str(r#"{"at":"2026-11-18T03:00:04Z","reason":"too_hot","message":"x"}"#)
+            .unwrap();
+    assert_eq!(newer.reason, SkipReason::Other);
     let start: StartRun = round_trip("run_start.json");
     assert_eq!(start.kind, RunKind::Backup);
     let _: StartRunReply = round_trip("run_start_reply.json");

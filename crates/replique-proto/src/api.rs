@@ -18,11 +18,16 @@ pub mod paths {
     pub const SAFE_TO_DELETE: &str = "/api/v1/devices/{id}/safe-to-delete";
     pub const MIRROR_SOURCES: &str = "/api/v1/mirror-sources";
     pub const VAULT: &str = "/api/v1/vault/{name}";
+    pub const JOB_SKIPPED: &str = "/api/v1/jobs/{name}/skipped";
 
     /// Job names are restricted to `[a-z0-9_-]` (see `valid_job_name`), so they
     /// never need escaping in a path.
     pub fn job(name: &str) -> String {
         format!("/api/v1/jobs/{name}")
+    }
+
+    pub fn job_skipped(name: &str) -> String {
+        format!("/api/v1/jobs/{name}/skipped")
     }
 
     pub fn run_progress(run_id: &str) -> String {

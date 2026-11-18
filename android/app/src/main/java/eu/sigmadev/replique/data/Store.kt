@@ -47,6 +47,8 @@ data class RunRecord(
     @SerialName("files_processed") val filesProcessed: Long = 0,
     @SerialName("bytes_processed") val bytesProcessed: Long = 0,
     @SerialName("bytes_added") val bytesAdded: Long = 0,
+    @SerialName("files_new") val filesNew: Long = 0,
+    @SerialName("files_changed") val filesChanged: Long = 0,
     @SerialName("error_count") val errorCount: Long = 0,
     @SerialName("unreadable_paths") val unreadablePaths: List<String> = emptyList(),
 )

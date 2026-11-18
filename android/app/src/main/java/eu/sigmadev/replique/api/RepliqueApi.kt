@@ -12,6 +12,7 @@ import eu.sigmadev.replique.proto.PairResponse
 import eu.sigmadev.replique.proto.Progress
 import eu.sigmadev.replique.proto.SafeToDelete
 import eu.sigmadev.replique.proto.StartRun
+import eu.sigmadev.replique.proto.SkippedRun
 import eu.sigmadev.replique.proto.StartRunReply
 import eu.sigmadev.replique.proto.Wire
 import java.io.IOException
@@ -44,6 +45,9 @@ interface RepliqueApi {
     fun progress(runId: String, progress: Progress): ApiResult<Ack>
     fun finish(runId: String, finish: FinishRun): ApiResult<Ack>
     fun safeToDelete(deviceId: String, since: Instant?): ApiResult<SafeToDelete>
+
+    /** Best effort: a skip not sent is only a missing explanation. */
+    fun skipped(job: String, skip: SkippedRun): ApiResult<Ack> = ApiResult.Unreachable("not supported")
 }
 
 class HttpRepliqueApi(
@@ -71,6 +75,9 @@ class HttpRepliqueApi(
 
     override fun finish(runId: String, finish: FinishRun) =
         call("POST", Api.runFinish(runId), json.encodeToString(FinishRun.serializer(), finish), Ack.serializer())
+
+    override fun skipped(job: String, skip: SkippedRun) =
+        call("POST", Api.jobSkipped(job), json.encodeToString(SkippedRun.serializer(), skip), Ack.serializer())
 
     override fun safeToDelete(deviceId: String, since: Instant?): ApiResult<SafeToDelete> {
         val query = since?.let { "?since=" + URLEncoder.encode(InstantSerializer.format(it), "UTF-8") } ?: ""

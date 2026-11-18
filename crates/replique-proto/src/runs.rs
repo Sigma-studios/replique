@@ -179,6 +179,34 @@ pub struct FinishRun {
     pub watched: Vec<WatchedReport>,
 }
 
+/// `POST /jobs/{name}/skipped`: a scheduled run came due but did not start.
+/// Nothing ran, so there is no run to report; the server keeps the latest one
+/// per job to say why the job is late.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SkippedRun {
+    pub at: Timestamp,
+    pub reason: SkipReason,
+    /// The reason in words, with what happens next ("runs as soon as the
+    /// phone charges").
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SkipReason {
+    /// The rules want a charger and the phone was on battery.
+    NotPluggedIn,
+    /// Below the rules' minimum battery level.
+    BatteryLow,
+    /// Android refused to start the backup in the background.
+    ForegroundRefused,
+    /// Android 15's daily allowance for background transfers is used up.
+    DailyLimit,
+    /// A reason this server does not know yet.
+    #[serde(other)]
+    Other,
+}
+
 /// One `WatchedFiles` entry as found on the device.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WatchedReport {

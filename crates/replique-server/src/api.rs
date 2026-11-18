@@ -102,6 +102,7 @@ pub fn router() -> Router<Arc<App>> {
     Router::new()
         .route(paths::PAIR, post(pair))
         .route(paths::JOB, put(put_job))
+        .route(paths::JOB_SKIPPED, post(job_skipped))
         .route(paths::DEVICE_CONFIG, get(device_config))
         .route(paths::RUNS, post(start_run))
         .route(paths::RUN_PROGRESS, post(progress))
@@ -161,6 +162,32 @@ async fn put_job(
             device_id: device.id.clone(),
         });
     }
+    Ok(Json(Ack::OK))
+}
+
+/// A scheduled run that did not start. Kept (the latest per job) to say why
+/// the job is late: on its card, and in the "no backup" alert.
+async fn job_skipped(
+    State(app): State<Arc<App>>,
+    DeviceAuth(device): DeviceAuth,
+    Path(name): Path<String>,
+    ApiJson(skip): ApiJson<replique_proto::SkippedRun>,
+) -> Result<Json<Ack>, ApiErr> {
+    let job = app
+        .store
+        .jobs_of(&device.id)?
+        .into_iter()
+        .find(|j| j.name == name)
+        .ok_or_else(|| ApiErr::not_found("No such job on this device: declare it first."))?;
+    let skip = replique_proto::SkippedRun {
+        message: skip.message.chars().take(500).collect(),
+        ..skip
+    };
+    crate::skips::record(&app, job.id, &skip)?;
+    tracing::info!(device = %device.name, job = %name, reason = ?skip.reason, "scheduled run skipped");
+    app.hub.publish(Event::Runs {
+        device_id: device.id.clone(),
+    });
     Ok(Json(Ack::OK))
 }
 

@@ -18,5 +18,6 @@ every new message or field.
 | `run_start_reply.json` | `StartRunReply` | `POST /runs` reply |
 | `run_progress.json`, `run_progress_phase.json` | `Progress` | `POST /runs/{id}/progress` body |
 | `run_finish_*.json` | `FinishRun` | `POST /runs/{id}/finish` body |
+| `skipped_run.json` | `SkippedRun` | `POST /jobs/{name}/skipped` body |
 | `safe_to_delete.json`, `safe_to_delete_none.json` | `SafeToDelete` | `GET /devices/{id}/safe-to-delete` reply |
 | `error.json` | `ApiError` | any non-2xx reply |

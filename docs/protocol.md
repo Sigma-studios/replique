@@ -313,6 +313,16 @@ Devices derive `status` from restic's exit code:
 The server sets two more itself: `running` until a finish arrives, and `lost`
 when none arrives within the job's expected duration plus a margin.
 
+### `POST /api/v1/jobs/{name}/skipped`
+
+A scheduled run came due but did not start (`skipped_run.json`): `at`,
+`reason` (`not_plugged_in`, `battery_low`, `foreground_refused`, `daily_limit`;
+an unknown reason reads as `other`) and `message`, the reason in words with what
+happens next. Nothing ran, so this is not a run: the server keeps the latest per
+job and shows it on the job's card, and in the "no backup" alert, until a run
+starts after it. Best effort: a device that cannot send it just does not.
+`404` for a job the device has not declared. Reply: `{"ok": true}`.
+
 ## Safe to delete
 
 ### `GET /api/v1/devices/{id}/safe-to-delete?since=<timestamp>`

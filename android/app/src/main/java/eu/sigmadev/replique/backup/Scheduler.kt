@@ -23,11 +23,40 @@ object Scheduler {
     const val SCHEDULED = "replique-scheduled"
     const val NOW = "replique-now"
     const val CONTINUE = "replique-continue"
+    const val WHEN_CHARGING = "replique-when-charging"
 
+    /**
+     * The network condition only. "While charging" is checked by the worker
+     * itself, as "plugged in": Android's charging constraint is false for a
+     * phone plugged in but held at a charge limit (80%), which would skip
+     * every night of a phone that protects its battery.
+     */
     fun constraints(conditions: Conditions): Constraints = Constraints.Builder()
         .setRequiredNetworkType(if (conditions.unmeteredOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
-        .setRequiresCharging(conditions.chargingOnly)
         .build()
+
+    /**
+     * A scheduled run found the phone on battery: run as soon as it charges
+     * (here Android's own charging constraint is right: it turns true the
+     * moment the phone is plugged in, before any charge limit applies).
+     */
+    fun whenCharging(context: Context, conditions: Conditions) {
+        val request = OneTimeWorkRequestBuilder<BackupWorker>()
+            .setConstraints(
+                Constraints.Builder()
+                    .setRequiredNetworkType(if (conditions.unmeteredOnly) NetworkType.UNMETERED else NetworkType.CONNECTED)
+                    .setRequiresCharging(true)
+                    .build(),
+            )
+            .addTag(WHEN_CHARGING)
+            .build()
+        WorkManager.getInstance(context).enqueueUniqueWork(WHEN_CHARGING, ExistingWorkPolicy.KEEP, request)
+    }
+
+    /** A backup went through: no catching up left to do. */
+    fun caughtUp(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(WHEN_CHARGING)
+    }
 
     /**
      * (Re)schedules the periodic backup. UPDATE keeps the current period's
@@ -98,6 +127,7 @@ object Scheduler {
         val wm = WorkManager.getInstance(context)
         wm.cancelUniqueWork(NOW)
         wm.cancelUniqueWork(CONTINUE)
+        wm.cancelUniqueWork(WHEN_CHARGING)
         // A periodic run can only be stopped by cancelling the periodic work
         // itself; it is scheduled again right away, a full period from now,
         // so that it does not start over the moment the user stopped it.
@@ -108,6 +138,6 @@ object Scheduler {
 
     fun cancelAll(context: Context) {
         val wm = WorkManager.getInstance(context)
-        listOf(SCHEDULED, NOW, CONTINUE).forEach { wm.cancelUniqueWork(it) }
+        listOf(SCHEDULED, NOW, CONTINUE, WHEN_CHARGING).forEach { wm.cancelUniqueWork(it) }
     }
 }
